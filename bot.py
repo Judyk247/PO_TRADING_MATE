@@ -16,6 +16,9 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 import eventlet
 
+# Monkey patch for production WebSocket support
+eventlet.monkey_patch()
+
 # Import custom modules
 from pocket_option.client import PocketOptionClient, OrderDirection
 from strategy.strategy import TradingStrategy, Signal
@@ -29,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'po-trading-mate-secret-key'
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'po-trading-mate-secret-key')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Global variables
 client: Optional[PocketOptionClient] = None
@@ -57,6 +60,11 @@ trade_stats = {
 }
 active_subscriptions = []
 
+# Load credentials from environment variables (optional)
+DEFAULT_EMAIL = os.environ.get('POCKET_OPTION_EMAIL', '')
+DEFAULT_PASSWORD = os.environ.get('POCKET_OPTION_PASSWORD', '')
+DEFAULT_DEMO = os.environ.get('POCKET_OPTION_DEMO', 'true').lower() == 'true'
+
 
 @app.route('/')
 def index():
@@ -74,6 +82,11 @@ def connect():
     password = data.get('password')
     account_type = data.get('account_type', 'demo')
     is_demo = account_type == 'demo'
+    
+    if (not email or not password) and DEFAULT_EMAIL and DEFAULT_PASSWORD:
+        email = DEFAULT_EMAIL
+        password = DEFAULT_PASSWORD
+        is_demo = DEFAULT_DEMO
     
     if not email or not password:
         return jsonify({'success': False, 'error': 'Email and password required'})
@@ -301,74 +314,75 @@ def _bot_loop():
                     _execute_trade(signal.direction, signal.price)
     
     # Subscribe to candles
-    client.subscribe_candles(current_asset, timeframe_seconds, on_candle)
+    if client:
+        client.subscribe_candles(current_asset, timeframe_seconds, on_candle)
     
-    # Register order result callback
-    def on_order_result(result):
-        global trade_stats, martingale_state
-        
-        trade_stats['total_trades'] += 1
-        trade_stats['last_trade_time'] = datetime.now()
-        
-        if result.is_win:
-            trade_stats['winning_trades'] += 1
-            trade_stats['daily_pl'] += result.profit
-            trade_stats['last_trade'] = f"WIN on {result.asset}: +${result.profit:.2f}"
+        # Register order result callback
+        def on_order_result(result):
+            global trade_stats, martingale_state
             
-            socketio.emit('trade_result', {
-                'is_win': True,
-                'profit': result.profit,
-                'asset': result.asset,
-                'direction': result.direction,
-                'amount': result.amount
-            })
+            trade_stats['total_trades'] += 1
+            trade_stats['last_trade_time'] = datetime.now()
             
-            # Reset martingale on win
-            if martingale_state['active']:
-                martingale_state = {
-                    "active": False,
-                    "step": 0,
-                    "current_amount": 0,
-                    "total_loss": 0,
-                    "original_direction": None
-                }
-                socketio.emit('log', {'message': 'Martingale sequence completed - WIN achieved!', 'type': 'success'})
-        else:
-            trade_stats['daily_pl'] -= result.amount
-            trade_stats['last_trade'] = f"LOSS on {result.asset}: -${result.amount:.2f}"
-            
-            socketio.emit('trade_result', {
-                'is_win': False,
-                'profit': 0,
-                'asset': result.asset,
-                'direction': result.direction,
-                'amount': result.amount
-            })
-            
-            # Handle martingale recovery
-            if martingale_enabled and bot_running:
-                if not martingale_state['active']:
-                    # Start new martingale sequence
-                    martingale_state['active'] = True
-                    martingale_state['step'] = 1
-                    martingale_state['current_amount'] = current_amount
-                    martingale_state['total_loss'] = result.amount
-                    martingale_state['original_direction'] = result.direction
-                else:
-                    # Continue existing sequence
-                    martingale_state['step'] += 1
-                    martingale_state['current_amount'] = martingale_state['current_amount'] * 2.3
-                    martingale_state['total_loss'] += result.amount
+            if result.is_win:
+                trade_stats['winning_trades'] += 1
+                trade_stats['daily_pl'] += result.profit
+                trade_stats['last_trade'] = f"WIN on {result.asset}: +${result.profit:.2f}"
                 
-                socketio.emit('log', {
-                    'message': f"Martingale activated: Step {martingale_state['step']} | Next trade: ${martingale_state['current_amount'] * 2.3:.2f}",
-                    'type': 'warning'
+                socketio.emit('trade_result', {
+                    'is_win': True,
+                    'profit': result.profit,
+                    'asset': result.asset,
+                    'direction': result.direction,
+                    'amount': result.amount
                 })
                 
-                # Execute next martingale trade immediately
-                _execute_trade(martingale_state['original_direction'], None, martingale=True)
-    
-    client.on_order_result(on_order_result)
+                # Reset martingale on win
+                if martingale_state['active']:
+                    martingale_state = {
+                        "active": False,
+                        "step": 0,
+                        "current_amount": 0,
+                        "total_loss": 0,
+                        "original_direction": None
+                    }
+                    socketio.emit('log', {'message': 'Martingale sequence completed - WIN achieved!', 'type': 'success'})
+            else:
+                trade_stats['daily_pl'] -= result.amount
+                trade_stats['last_trade'] = f"LOSS on {result.asset}: -${result.amount:.2f}"
+                
+                socketio.emit('trade_result', {
+                    'is_win': False,
+                    'profit': 0,
+                    'asset': result.asset,
+                    'direction': result.direction,
+                    'amount': result.amount
+                })
+                
+                # Handle martingale recovery
+                if martingale_enabled and bot_running:
+                    if not martingale_state['active']:
+                        # Start new martingale sequence
+                        martingale_state['active'] = True
+                        martingale_state['step'] = 1
+                        martingale_state['current_amount'] = current_amount
+                        martingale_state['total_loss'] = result.amount
+                        martingale_state['original_direction'] = result.direction
+                    else:
+                        # Continue existing sequence
+                        martingale_state['step'] += 1
+                        martingale_state['current_amount'] = martingale_state['current_amount'] * 2.3
+                        martingale_state['total_loss'] += result.amount
+                    
+                    socketio.emit('log', {
+                        'message': f"Martingale activated: Step {martingale_state['step']} | Next trade: ${martingale_state['current_amount'] * 2.3:.2f}",
+                        'type': 'warning'
+                    })
+                    
+                    # Execute next martingale trade immediately
+                    _execute_trade(martingale_state['original_direction'], None, martingale=True)
+        
+        client.on_order_result(on_order_result)
     
     # Keep thread alive
     while bot_running:
@@ -412,30 +426,11 @@ def handle_connect():
     emit('log', {'message': 'Connected to PO TRADING MATE server', 'type': 'success'})
 
 
+# For production with Gunicorn (Render)
+# The app is exported as 'application' for Gunicorn to use
+application = app
+
 if __name__ == '__main__':
-    print("""
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║                                                                  ║
-    ║     ██████╗  ██████╗     ████████╗██████╗  █████╗ ██████╗ ██╗   ║
-    ║     ██╔══██╗██╔══██╗    ╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╗   ║
-    ║     ██████╔╝██████╔╝       ██║   ██║  ██║███████║██████╔╝██║   ║
-    ║     ██╔═══╝ ██╔══██╗       ██║   ██║  ██║██╔══██║██╔══██╗██║   ║
-    ║     ██║     ██║  ██║       ██║   ██████╔╝██║  ██║██║  ██║███████╗
-    ║     ╚═╝     ╚═╝  ╚═╝       ╚═╝   ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
-    ║                                                                  ║
-    ║                         ███╗   ███╗ █████╗ ████████╗███████╗     ║
-    ║                         ████╗ ████║██╔══██╗╚══██╔══╝██╔════╝     ║
-    ║                         ██╔████╔██║███████║   ██║   █████╗       ║
-    ║                         ██║╚██╔╝██║██╔══██║   ██║   ██╔══╝       ║
-    ║                         ██║ ╚═╝ ██║██║  ██║   ██║   ███████╗     ║
-    ║                         ╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝     ║
-    ║                                                                  ║
-    ║                    POCKET OPTION TRADING BOT                     ║
-    ║                                                                  ║
-    ╚══════════════════════════════════════════════════════════════════╝
-    """)
-    print("\n🚀 PO TRADING MATE is starting...")
-    print("📍 Open your browser and go to: http://localhost:5000")
-    print("=" * 60)
-    
+    # For local development only
+    # Use this command for local testing: python bot.py
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
