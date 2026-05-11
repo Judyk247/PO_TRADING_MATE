@@ -2,15 +2,33 @@
 PO TRADING MATE - Complete Trading Strategy
 - 1m, 2m, 3m: Trend Following
 - 5m: Reversal Trading
+
+NOTE: This strategy works with OR without TA-Lib, pandas, numpy.
+If libraries are not available, it uses manual calculations (slower but works).
 """
 
-import pandas as pd
-import numpy as np
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
+
+# Try to import pandas and numpy - they are optional now
+try:
+    import pandas as pd
+    import numpy as np
+    PANDAS_NUMPY_AVAILABLE = True
+except ImportError:
+    PANDAS_NUMPY_AVAILABLE = False
+    # Create dummy classes for type hints when pandas/numpy not available
+    class pd:
+        class DataFrame:
+            pass
+    class np:
+        @staticmethod
+        def zeros(size):
+            return [0] * size
+    print("⚠️ pandas/numpy not installed. Using pure Python calculations (slower but works).")
 
 
 @dataclass
@@ -65,7 +83,7 @@ class TradingStrategy:
             'candle_body_threshold': 0.6,
             'doji_threshold': 0.3,
             'reversal_lookback': 10,
-            'fractal_threshold': 0.002,
+            'fractal_threshold': 0.002,  # 0.2%
             'min_reversals': 2
         }
         
@@ -100,6 +118,14 @@ class TradingStrategy:
                 details={"error": f"Need 50+ candles, have {len(candles)}"}
             )
         
+        # Use pandas/numpy if available, otherwise use pure Python
+        if PANDAS_NUMPY_AVAILABLE:
+            return self._analyze_with_pandas(candles)
+        else:
+            return self._analyze_pure_python(candles)
+    
+    def _analyze_with_pandas(self, candles: List[Dict]) -> Signal:
+        """Analyze using pandas/numpy (faster)"""
         # Convert to DataFrame
         df = pd.DataFrame(candles)
         df['close'] = pd.to_numeric(df['close'])
@@ -108,7 +134,7 @@ class TradingStrategy:
         df['open'] = pd.to_numeric(df['open'])
         
         # Calculate indicators
-        df = self._calculate_indicators(df)
+        df = self._calculate_indicators_pandas(df)
         
         # Get latest index
         i = len(df) - 1
@@ -118,12 +144,31 @@ class TradingStrategy:
         
         # Generate signal based on timeframe
         if self.is_trend:
-            return self._generate_trend_signal(df, i, current_price)
+            return self._generate_trend_signal_pandas(df, i, current_price)
         else:
-            return self._generate_reversal_signal(df, i, current_price)
+            return self._generate_reversal_signal_pandas(df, i, current_price)
     
-    def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate all technical indicators"""
+    def _analyze_pure_python(self, candles: List[Dict]) -> Signal:
+        """Analyze using pure Python (slower but works without pandas/numpy)"""
+        # Extract values as lists
+        closes = [c['close'] for c in candles]
+        highs = [c['high'] for c in candles]
+        lows = [c['low'] for c in candles]
+        opens = [c['open'] for c in candles]
+        
+        current_price = closes[-1]
+        
+        # Calculate indicators manually
+        indicators = self._calculate_indicators_pure(closes, highs, lows, opens)
+        
+        # Generate signal based on timeframe
+        if self.is_trend:
+            return self._generate_trend_signal_pure(indicators, current_price)
+        else:
+            return self._generate_reversal_signal_pure(indicators, current_price)
+    
+    def _calculate_indicators_pandas(self, df):
+        """Calculate indicators using pandas (fast)"""
         df = df.copy()
         
         # Alligator (Simple Moving Averages)
@@ -155,18 +200,152 @@ class TradingStrategy:
         df['atr_median'] = df['atr'].rolling(window=lookback).median()
         
         # Fractals
-        df['fractal_high'] = self._calc_fractals(df['high'].values, 'high')
-        df['fractal_low'] = self._calc_fractals(df['low'].values, 'low')
+        df['fractal_high'] = self._calc_fractals_pandas(df['high'].values, 'high')
+        df['fractal_low'] = self._calc_fractals_pandas(df['low'].values, 'low')
         
         # Reversal counts (only needed for 5m)
         if self.is_reversal:
-            df['reversal_count_buy'] = self._calc_reversal_count(df, 'buy')
-            df['reversal_count_sell'] = self._calc_reversal_count(df, 'sell')
+            df['reversal_count_buy'] = self._calc_reversal_count_pandas(df, 'buy')
+            df['reversal_count_sell'] = self._calc_reversal_count_pandas(df, 'sell')
         
         return df
     
-    def _calc_fractals(self, price_series: np.ndarray, price_type: str) -> np.ndarray:
-        """Calculate fractal indicator"""
+    def _calculate_indicators_pure(self, closes, highs, lows, opens):
+        """Calculate indicators using pure Python (no pandas/numpy)"""
+        n = len(closes)
+        indicators = {}
+        
+        # Alligator (SMA)
+        jaw_period = self.params['alligator_jaw']
+        teeth_period = self.params['alligator_teeth']
+        lips_period = self.params['alligator_lips']
+        
+        indicators['jaw'] = self._sma(closes, jaw_period)
+        indicators['teeth'] = self._sma(closes, teeth_period)
+        indicators['lips'] = self._sma(closes, lips_period)
+        
+        # EMA-150
+        ema_period = self.params['ema_period']
+        indicators['ema_150'] = self._ema(closes, ema_period)
+        
+        # EMA Slope
+        indicators['ema_slope'] = [0] * n
+        for i in range(1, n):
+            indicators['ema_slope'][i] = indicators['ema_150'][i] - indicators['ema_150'][i-1]
+        
+        # Stochastic
+        k_period = self.params['stoch_k']
+        d_period = self.params['stoch_d']
+        indicators['stoch_k'], indicators['stoch_d'] = self._stochastic(highs, lows, closes, k_period, d_period)
+        
+        # ATR
+        atr_period = self.params['atr_period']
+        indicators['atr'] = self._atr(highs, lows, closes, atr_period)
+        
+        # Median ATR
+        lookback = 10 if self.timeframe == '5m' else 5
+        indicators['atr_median'] = self._median(indicators['atr'], lookback)
+        
+        # Fractals
+        indicators['fractal_high'] = self._calc_fractals_pure(highs, 'high')
+        indicators['fractal_low'] = self._calc_fractals_pure(lows, 'low')
+        
+        # Reversal counts (only for 5m)
+        if self.is_reversal:
+            indicators['reversal_count_buy'] = self._calc_reversal_count_pure(lows, indicators['fractal_low'], 'buy')
+            indicators['reversal_count_sell'] = self._calc_reversal_count_pure(highs, indicators['fractal_high'], 'sell')
+        
+        return indicators
+    
+    def _sma(self, data, period):
+        """Simple Moving Average - pure Python"""
+        result = []
+        for i in range(len(data)):
+            if i < period - 1:
+                result.append(data[i])  # Not enough data
+            else:
+                sma = sum(data[i-period+1:i+1]) / period
+                result.append(sma)
+        return result
+    
+    def _ema(self, data, period):
+        """Exponential Moving Average - pure Python"""
+        result = []
+        multiplier = 2 / (period + 1)
+        
+        for i in range(len(data)):
+            if i == 0:
+                result.append(data[0])
+            elif i < period:
+                # Simple average until we have enough data
+                result.append(sum(data[:i+1]) / (i+1))
+            else:
+                ema = (data[i] - result[i-1]) * multiplier + result[i-1]
+                result.append(ema)
+        return result
+    
+    def _stochastic(self, highs, lows, closes, k_period, d_period):
+        """Stochastic Oscillator - pure Python"""
+        k_values = []
+        d_values = []
+        
+        for i in range(len(closes)):
+            if i < k_period - 1:
+                k_values.append(50.0)  # Default
+                d_values.append(50.0)
+            else:
+                highest_high = max(highs[i-k_period+1:i+1])
+                lowest_low = min(lows[i-k_period+1:i+1])
+                if highest_high == lowest_low:
+                    k = 50.0
+                else:
+                    k = 100 * (closes[i] - lowest_low) / (highest_high - lowest_low)
+                k_values.append(k)
+                
+                # D is SMA of K
+                if i < d_period - 1:
+                    d = k
+                else:
+                    d = sum(k_values[i-d_period+1:i+1]) / d_period
+                d_values.append(d)
+        
+        return k_values, d_values
+    
+    def _atr(self, highs, lows, closes, period):
+        """Average True Range - pure Python"""
+        tr_values = []
+        
+        for i in range(len(highs)):
+            if i == 0:
+                tr = highs[i] - lows[i]
+            else:
+                high_low = highs[i] - lows[i]
+                high_close = abs(highs[i] - closes[i-1])
+                low_close = abs(lows[i] - closes[i-1])
+                tr = max(high_low, high_close, low_close)
+            tr_values.append(tr)
+        
+        # SMA of TR
+        return self._sma(tr_values, period)
+    
+    def _median(self, data, period):
+        """Rolling median - pure Python"""
+        result = []
+        for i in range(len(data)):
+            if i < period - 1:
+                result.append(data[i])
+            else:
+                window = sorted(data[i-period+1:i+1])
+                mid = len(window) // 2
+                if len(window) % 2 == 0:
+                    median = (window[mid-1] + window[mid]) / 2
+                else:
+                    median = window[mid]
+                result.append(median)
+        return result
+    
+    def _calc_fractals_pandas(self, price_series, price_type):
+        """Calculate fractals using numpy (fast)"""
         fractals = np.zeros(len(price_series))
         
         for i in range(2, len(price_series) - 2):
@@ -184,8 +363,27 @@ class TradingStrategy:
                     fractals[i] = 1
         return fractals
     
-    def _calc_reversal_count(self, df: pd.DataFrame, signal_type: str) -> pd.Series:
-        """Count reversals at current price level"""
+    def _calc_fractals_pure(self, price_series, price_type):
+        """Calculate fractals using pure Python"""
+        fractals = [0] * len(price_series)
+        
+        for i in range(2, len(price_series) - 2):
+            if price_type == 'high':
+                if (price_series[i] > price_series[i-2] and 
+                    price_series[i] > price_series[i-1] and 
+                    price_series[i] > price_series[i+1] and 
+                    price_series[i] > price_series[i+2]):
+                    fractals[i] = 1
+            else:
+                if (price_series[i] < price_series[i-2] and 
+                    price_series[i] < price_series[i-1] and 
+                    price_series[i] < price_series[i+1] and 
+                    price_series[i] < price_series[i+2]):
+                    fractals[i] = 1
+        return fractals
+    
+    def _calc_reversal_count_pandas(self, df, signal_type):
+        """Count reversals using pandas"""
         reversal_count = pd.Series(0, index=df.index)
         lookback = self.params['reversal_lookback']
         threshold_pct = self.params['fractal_threshold']
@@ -216,8 +414,28 @@ class TradingStrategy:
         
         return reversal_count
     
-    def _check_three_candle_pattern(self, df: pd.DataFrame, i: int, pattern: str) -> bool:
-        """Check 3-candle pattern"""
+    def _calc_reversal_count_pure(self, prices, fractals, signal_type):
+        """Count reversals using pure Python"""
+        n = len(prices)
+        reversal_count = [0] * n
+        lookback = self.params['reversal_lookback']
+        threshold_pct = self.params['fractal_threshold']
+        
+        for i in range(lookback, n):
+            current_price = prices[i]
+            threshold = current_price * threshold_pct
+            
+            count = 0
+            for j in range(i - lookback, i):
+                if fractals[j] == 1:
+                    if abs(prices[j] - current_price) < threshold:
+                        count += 1
+            reversal_count[i] = count
+        
+        return reversal_count
+    
+    def _check_three_candle_pattern_pandas(self, df, i, pattern):
+        """Check 3-candle pattern using pandas"""
         if i < 2:
             return False
         
@@ -236,28 +454,24 @@ class TradingStrategy:
         doji_threshold = self.params['doji_threshold']
         
         if pattern == 'trend_buy':
-            # Pullback (bearish) → Indecision → Continuation (bullish)
             bearish = c1['close'] < c1['open'] and (c1_body / c1_range) > body_threshold if c1_range > 0 else False
             indecision = (c2_body / c2_range) < doji_threshold if c2_range > 0 else False
             bullish = c3['close'] > c3['open'] and (c3_body / c3_range) > body_threshold if c3_range > 0 else False
             return bearish and indecision and bullish and c3['close'] > c2['high']
             
         elif pattern == 'trend_sell':
-            # Rally (bullish) → Indecision → Continuation (bearish)
             bullish = c1['close'] > c1['open'] and (c1_body / c1_range) > body_threshold if c1_range > 0 else False
             indecision = (c2_body / c2_range) < doji_threshold if c2_range > 0 else False
             bearish = c3['close'] < c3['open'] and (c3_body / c3_range) > body_threshold if c3_range > 0 else False
             return bullish and indecision and bearish and c3['close'] < c2['low']
             
         elif pattern == 'reversal_buy':
-            # Bearish → Indecision → Bullish reversal
             bearish = c1['close'] < c1['open'] and (c1_body / c1_range) > body_threshold if c1_range > 0 else False
             indecision = (c2_body / c2_range) < doji_threshold if c2_range > 0 else False
             bullish = c3['close'] > c3['open'] and (c3_body / c3_range) > body_threshold if c3_range > 0 else False
             return bearish and indecision and bullish and c3['close'] > c2['high']
             
         elif pattern == 'reversal_sell':
-            # Bullish → Indecision → Bearish reversal
             bullish = c1['close'] > c1['open'] and (c1_body / c1_range) > body_threshold if c1_range > 0 else False
             indecision = (c2_body / c2_range) < doji_threshold if c2_range > 0 else False
             bearish = c3['close'] < c3['open'] and (c3_body / c3_range) > body_threshold if c3_range > 0 else False
@@ -265,8 +479,8 @@ class TradingStrategy:
         
         return False
     
-    def _check_price_near_fractal(self, df: pd.DataFrame, i: int, signal_type: str) -> bool:
-        """Check if price is near fractal support/resistance"""
+    def _check_price_near_fractal_pandas(self, df, i, signal_type):
+        """Check if price is near fractal support/resistance using pandas"""
         current_price = df['close'].iloc[i]
         threshold = current_price * self.params['fractal_threshold']
         
@@ -284,12 +498,10 @@ class TradingStrategy:
                         return True
         return False
     
-    def _generate_trend_signal(self, df: pd.DataFrame, i: int, current_price: float) -> Signal:
-        """Generate trend following signal (1m, 2m, 3m)"""
+    def _generate_trend_signal_pandas(self, df, i, current_price):
+        """Generate trend following signal using pandas"""
         rules_passed = []
-        confidence = 0
         
-        # Check conditions for CALL
         call_conditions = []
         put_conditions = []
         
@@ -298,179 +510,4 @@ class TradingStrategy:
         ema_put = df['ema_slope'].iloc[i] < 0 and df['close'].iloc[i] < df['ema_150'].iloc[i]
         call_conditions.append(ema_call)
         put_conditions.append(ema_put)
-        if ema_call:
-            rules_passed.append("✓ EMA-150 sloping upward + price above EMA")
-        
-        # 2. Alligator Condition
-        gator_call = df['lips'].iloc[i] > df['teeth'].iloc[i] > df['jaw'].iloc[i]
-        gator_put = df['lips'].iloc[i] < df['teeth'].iloc[i] < df['jaw'].iloc[i]
-        call_conditions.append(gator_call)
-        put_conditions.append(gator_put)
-        if gator_call:
-            rules_passed.append("✓ Alligator aligned bullish (Lips > Teeth > Jaw)")
-        
-        # 3. Stochastic Condition
-        stoch_k = df['stoch_k'].iloc[i]
-        stoch_prev = df['stoch_k'].iloc[i-1] if i > 0 else 50
-        stoch_call = 20 <= stoch_k <= 40 and stoch_k > stoch_prev
-        stoch_put = 60 <= stoch_k <= 80 and stoch_k < stoch_prev
-        call_conditions.append(stoch_call)
-        put_conditions.append(stoch_put)
-        if stoch_call:
-            rules_passed.append(f"✓ Stochastic in 20-40 zone ({stoch_k:.1f}) turning up")
-        
-        # 4. Volatility Condition
-        vol_ok = df['atr'].iloc[i] > df['atr_median'].iloc[i]
-        call_conditions.append(vol_ok)
-        put_conditions.append(vol_ok)
-        if vol_ok:
-            rules_passed.append("✓ ATR > median (volatility confirmed)")
-        
-        # 5. Fractal Condition
-        fractal_call = self._check_price_near_fractal(df, i, 'buy')
-        fractal_put = self._check_price_near_fractal(df, i, 'sell')
-        call_conditions.append(fractal_call)
-        put_conditions.append(fractal_put)
-        if fractal_call:
-            rules_passed.append("✓ Price near fractal support")
-        
-        # 6. 3-Candle Pattern
-        pattern_call = self._check_three_candle_pattern(df, i, 'trend_buy')
-        pattern_put = self._check_three_candle_pattern(df, i, 'trend_sell')
-        call_conditions.append(pattern_call)
-        put_conditions.append(pattern_put)
-        if pattern_call:
-            rules_passed.append("✓ 3-candle trend continuation pattern (bullish)")
-        
-        # Calculate confidence
-        call_score = sum(call_conditions) / len(call_conditions) * 100
-        put_score = sum(put_conditions) / len(put_conditions) * 100
-        
-        # Determine signal
-        if call_score >= 60 and call_score > put_score:
-            return Signal(
-                direction="CALL",
-                confidence=int(call_score),
-                signal_type="trend",
-                expiry_minutes=self.expiry_map.get(self.timeframe, 2),
-                price=current_price,
-                timestamp=datetime.now().isoformat(),
-                rules_passed=rules_passed[:6],
-                details={
-                    "ema": float(df['ema_150'].iloc[i]),
-                    "stoch_k": float(stoch_k),
-                    "atr": float(df['atr'].iloc[i]),
-                    "atr_median": float(df['atr_median'].iloc[i])
-                }
-            )
-        elif put_score >= 60 and put_score > call_score:
-            return Signal(
-                direction="PUT",
-                confidence=int(put_score),
-                signal_type="trend",
-                expiry_minutes=self.expiry_map.get(self.timeframe, 2),
-                price=current_price,
-                timestamp=datetime.now().isoformat(),
-                rules_passed=rules_passed[:6],
-                details={
-                    "ema": float(df['ema_150'].iloc[i]),
-                    "stoch_k": float(stoch_k),
-                    "atr": float(df['atr'].iloc[i]),
-                    "atr_median": float(df['atr_median'].iloc[i])
-                }
-            )
-        
-        return Signal(
-            direction="HOLD",
-            confidence=max(int(call_score), int(put_score)),
-            signal_type="trend",
-            expiry_minutes=self.expiry_map.get(self.timeframe, 2),
-            price=current_price,
-            timestamp=datetime.now().isoformat(),
-            rules_passed=["No clear signal. Waiting for better conditions."],
-            details={"call_score": call_score, "put_score": put_score}
-        )
-    
-    def _generate_reversal_signal(self, df: pd.DataFrame, i: int, current_price: float) -> Signal:
-        """Generate reversal signal (5m)"""
-        rules_passed = []
-        
-        # Check conditions for CALL (buy reversal)
-        call_conditions = []
-        put_conditions = []
-        
-        # 1. EMA Condition (price below EMA-150 for reversal buy)
-        ema_call = df['close'].iloc[i] < df['ema_150'].iloc[i]
-        ema_put = df['close'].iloc[i] > df['ema_150'].iloc[i]
-        call_conditions.append(ema_call)
-        put_conditions.append(ema_put)
-        if ema_call:
-            rules_passed.append("✓ Price below EMA-150 (overshoot condition)")
-        
-        # 2. Alligator Condition (contracting/crossing)
-        lips = df['lips'].iloc[i]
-        teeth = df['teeth'].iloc[i]
-        jaw = df['jaw'].iloc[i]
-        diff_lt = abs(lips - teeth)
-        diff_tj = abs(teeth - jaw)
-        avg_price = (lips + teeth + jaw) / 3
-        threshold = 0.002 * avg_price
-        contracting = diff_lt < threshold and diff_tj < threshold
-        
-        if i > 0:
-            crossing = ((lips > teeth and df['lips'].iloc[i-1] < df['teeth'].iloc[i-1]) or
-                       (lips < teeth and df['lips'].iloc[i-1] > df['teeth'].iloc[i-1]))
-        else:
-            crossing = False
-        
-        gator_ok = contracting or crossing
-        call_conditions.append(gator_ok)
-        put_conditions.append(gator_ok)
-        if gator_ok:
-            rules_passed.append("✓ Alligator contracting/crossing (trend exhaustion)")
-        
-        # 3. Stochastic Condition
-        stoch_k = df['stoch_k'].iloc[i]
-        stoch_prev = df['stoch_k'].iloc[i-1] if i > 0 else 50
-        stoch_call = stoch_k < self.params['oversold'] or (stoch_k > stoch_prev and stoch_prev < self.params['oversold'])
-        stoch_put = stoch_k > self.params['overbought'] or (stoch_k < stoch_prev and stoch_prev > self.params['overbought'])
-        call_conditions.append(stoch_call)
-        put_conditions.append(stoch_put)
-        if stoch_call:
-            rules_passed.append(f"✓ Stochastic oversold ({stoch_k:.1f} < 20) turning up")
-        
-        # 4. Volatility Condition
-        vol_ok = df['atr'].iloc[i] > df['atr_median'].iloc[i]
-        call_conditions.append(vol_ok)
-        put_conditions.append(vol_ok)
-        if vol_ok:
-            rules_passed.append("✓ ATR > median (volatility confirmed)")
-        
-        # 5. Historical Bias
-        hist_call = df['reversal_count_buy'].iloc[i] >= self.params['min_reversals'] if 'reversal_count_buy' in df.columns else True
-        hist_put = df['reversal_count_sell'].iloc[i] >= self.params['min_reversals'] if 'reversal_count_sell' in df.columns else True
-        call_conditions.append(hist_call)
-        put_conditions.append(hist_put)
-        if hist_call:
-            count = int(df['reversal_count_buy'].iloc[i]) if 'reversal_count_buy' in df.columns else 0
-            rules_passed.append(f"✓ Historical reversal count: {count} reversals at this level")
-        
-        # 6. Fractal Condition
-        fractal_call = self._check_price_near_fractal(df, i, 'buy')
-        fractal_put = self._check_price_near_fractal(df, i, 'sell')
-        call_conditions.append(fractal_call)
-        put_conditions.append(fractal_put)
-        if fractal_call:
-            rules_passed.append("✓ Price near fractal low (support level identified)")
-        
-        # 7. 3-Candle Pattern
-        pattern_call = self._check_three_candle_pattern(df, i, 'reversal_buy')
-        pattern_put = self._check_three_candle_pattern(df, i, 'reversal_sell')
-        call_conditions.append(pattern_call)
-        put_conditions.append(pattern_put)
-        if pattern_call:
-            rules_passed.append("✓ 3-candle reversal pattern confirmed")
-        
-        # Calculate confidence
-        call_score = sum(call_conditions) / len(call_conditions) * 100
-        put_score = sum(
+        if e
