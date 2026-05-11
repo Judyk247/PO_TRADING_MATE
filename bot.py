@@ -4,38 +4,78 @@ PO TRADING MATE - Pocket Option Auto-Trading Bot
 Main Flask Application
 """
 
+# ============================================================
+# CRITICAL: eventlet.monkey_patch() MUST be the first thing
+# ============================================================
+import eventlet
+eventlet.monkey_patch()
+
+# ============================================================
+# Standard library imports
+# ============================================================
 import os
+import sys
 import json
 import threading
 import time
 import logging
+import traceback
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+# ============================================================
+# Print debug info immediately (visible in Render logs)
+# ============================================================
+print(f"🐍 Python version: {sys.version}")
+print(f"📁 Current working directory: {os.getcwd()}")
+print(f"📂 Files in directory: {os.listdir('.')}")
+
+# ============================================================
+# Third-party imports
+# ============================================================
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
-import eventlet
 
-# Monkey patch for production WebSocket support
-eventlet.monkey_patch()
+# ============================================================
+# Local imports (with error handling)
+# ============================================================
+try:
+    from pocket_option.client import PocketOptionClient, OrderDirection
+    print("✅ Successfully imported pocket_option.client")
+except Exception as e:
+    print(f"❌ Failed to import pocket_option.client: {e}")
+    traceback.print_exc()
+    sys.exit(1)
 
-# Import custom modules
-from pocket_option.client import PocketOptionClient, OrderDirection
-from strategy.strategy import TradingStrategy, Signal
+try:
+    from strategy.strategy import TradingStrategy, Signal
+    print("✅ Successfully imported strategy.strategy")
+except Exception as e:
+    print(f"❌ Failed to import strategy.strategy: {e}")
+    traceback.print_exc()
+    sys.exit(1)
 
+# ============================================================
 # Configure logging
+# ============================================================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# ============================================================
 # Initialize Flask app
+# ============================================================
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'po-trading-mate-secret-key')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
+print("✅ Flask app and SocketIO initialized")
+
+# ============================================================
 # Global variables
+# ============================================================
 client: Optional[PocketOptionClient] = None
 bot_running = False
 bot_thread: Optional[threading.Thread] = None
@@ -65,10 +105,16 @@ DEFAULT_EMAIL = os.environ.get('POCKET_OPTION_EMAIL', '')
 DEFAULT_PASSWORD = os.environ.get('POCKET_OPTION_PASSWORD', '')
 DEFAULT_DEMO = os.environ.get('POCKET_OPTION_DEMO', 'true').lower() == 'true'
 
+print("✅ Global variables initialized")
+
+# ============================================================
+# Route Handlers
+# ============================================================
 
 @app.route('/')
 def index():
     """Serve the main dashboard"""
+    print("📊 Index route accessed")
     return render_template('index.html')
 
 
@@ -92,20 +138,26 @@ def connect():
         return jsonify({'success': False, 'error': 'Email and password required'})
     
     try:
+        print(f"🔐 Attempting to connect with email: {email}")
         client = PocketOptionClient(email=email, password=password, is_demo=is_demo)
         
         if client.authenticate():
+            print("✅ Authentication successful")
             if client.connect_websocket():
+                print("✅ WebSocket connected")
                 balance = client.get_balance()
                 socketio.emit('log', {'message': f'Connected to Pocket Option', 'type': 'success'})
                 return jsonify({'success': True, 'balance': balance})
             else:
+                print("❌ WebSocket connection failed")
                 return jsonify({'success': False, 'error': 'WebSocket connection failed'})
         else:
+            print("❌ Authentication failed")
             return jsonify({'success': False, 'error': 'Authentication failed'})
             
     except Exception as e:
         logger.error(f"Connection error: {e}")
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
 
@@ -427,23 +479,33 @@ def handle_connect():
 
 
 # ============================================================
-# RENDER DEPLOYMENT - Use 'python bot.py' as start command
+# RENDER DEPLOYMENT - Main entry point with error handling
 # ============================================================
 
 if __name__ == '__main__':
-    # Get the port from environment variable (Render sets this automatically)
-    port = int(os.environ.get('PORT', 10000))
-    
-    # For local development, you can also use port 5000
-    # For Render, it will use the PORT environment variable
-    print(f"🚀 PO TRADING MATE starting on port {port}")
-    print(f"📍 Open your browser to: http://localhost:{port}")
-    
-    # Run the app with SocketIO
-    socketio.run(
-        app, 
-        host='0.0.0.0', 
-        port=port, 
-        debug=False,  # Set to False for production
-        allow_unsafe_werkzeug=True  # Required for production
-    )
+    try:
+        print("=" * 60)
+        print("🚀 PO TRADING MATE Starting...")
+        print("=" * 60)
+        
+        # Get the port from environment variable (Render sets this automatically)
+        port = int(os.environ.get('PORT', 10000))
+        
+        print(f"📍 Port: {port}")
+        print(f"📍 Host: 0.0.0.0")
+        print(f"📍 Debug: False")
+        print("=" * 60)
+        
+        # Run the app with SocketIO
+        socketio.run(
+            app,
+            host='0.0.0.0',
+            port=port,
+            debug=False,
+            allow_unsafe_werkzeug=True  # Required for production
+        )
+        
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR: {e}")
+        traceback.print_exc()
+        sys.exit(1)
