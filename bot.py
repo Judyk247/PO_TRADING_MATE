@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""
+PO TRADING MATE - Pocket Option Auto-Trading Bot
+Main Flask Application
+"""
+
+import os
+import json
+import threading
+import time
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+
+from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO, emit
+import eventlet
+
+# Import custom modules
+from pocket_option.client import PocketOptionClient, OrderDirection
+from strategy.strategy import TradingStrategy, Signal
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Initialize Flask app
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'po-trading-mate-secret-key'
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Global variables
+client: Optional[PocketOptionClient] = None
+bot_running = False
+bot_thread: Optional[threading.Thread] = None
+current_asset = ""
+current_amount = 10.0
+current_timeframe = "5m"
+current_strategy: Optional[TradingStrategy] = None
+martingale_enabled = False
+martingale_state = {
+    "active": False,
+    "step": 0,
+    "current_amount": 0,
+    "total_loss": 0,
+    "original_direction": None
+}
+trade_stats = {
+    "total_trades": 0,
+    "winning_trades": 0,
+    "daily_pl": 0.0,
+    "last_trade": None,
+    "last_trade_time": None
+}
+active_subscriptions = []
+
+
+@app.route('/')
+def index():
+    """Serve the main dashboard"""
+    return render_template('index.html')
+
+
+@app.route('/api/connect', methods=['POST'])
+def connect():
+    """Connect to Pocket Option"""
+    global client
+    
+    data = request.json
+    email = data.get('email')
+    password = data.get('password')
+    account_type = data.get('account_type', 'demo')
+    is_demo = account_type == 'demo'
+    
+    if not email or not password:
+        return jsonify({'success': False, 'error': 'Email and password required'})
+    
+    try:
+        client = PocketOptionClient(email=email, password=password, is_demo=is_demo)
+        
+        if client.authenticate():
+            if client.connect_websocket():
+                balance = client.get_balance()
+                socketio.emit('log', {'message': f'Connected to Pocket Option', 'type': 'success'})
+                return jsonify({'success': True, 'balance': balance})
+            else:
+                return jsonify({'success': False, 'error': 'WebSocket connection failed'})
+        else:
+            return jsonify({'success': False, 'error': 'Authentication failed'})
+            
+    except Exception as e:
+        logger.error(f"Connection error: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/disconnect', methods=['POST'])
+def disconnect():
+    """Disconnect from Pocket Option"""
+    global client, bot_running
+    
+    bot_running = False
+    
+    if client:
+        client.disconnect()
+        client = None
+    
+    socketio.emit('log', {'message': 'Disconnected from Pocket Option', 'type': 'info'})
+    return jsonify({'success': True})
+
+
+@app.route('/api/assets')
+def get_assets():
+    """Get available assets with 85%+ payout"""
+    if not client:
+        return jsonify([])
+    
+    assets = client.get_assets()
+    return jsonify([
+        {
+            'symbol': a.symbol,
+            'name': a.name,
+            'payout': a.payout,
+            'min_amount': a.min_amount,
+            'max_amount': a.max_amount
+        }
+        for a in assets
+    ])
+
+
+@app.route('/api/start_bot', methods=['POST'])
+def start_bot():
+    """Start auto-trading bot"""
+    global bot_running, bot_thread, current_asset, current_amount, current_timeframe
+    global current_strategy, martingale_enabled
+    
+    data = request.json
+    current_asset = data.get('asset', 'EURUSD_otc')
+    current_amount = float(data.get('amount', 10))
+    current_timeframe = data.get('timeframe', '5m')
+    martingale_enabled = data.get('martingale', False)
+    
+    if not client or not client.is_connected:
+        return jsonify({'success': False, 'error': 'Not connected to Pocket Option'})
+    
+    bot_running = True
+    current_strategy = TradingStrategy(timeframe=current_timeframe)
+    
+    # Reset martingale state
+    global martingale_state
+    martingale_state = {
+        "active": False,
+        "step": 0,
+        "current_amount": 0,
+        "total_loss": 0,
+        "original_direction": None
+    }
+    
+    # Start bot thread
+    bot_thread = threading.Thread(target=_bot_loop, daemon=True)
+    bot_thread.start()
+    
+    socketio.emit('log', {'message': f'Bot started | Asset: {current_asset} | Amount: ${current_amount} | Timeframe: {current_timeframe}', 'type': 'success'})
+    return jsonify({'success': True})
+
+
+@app.route('/api/stop_bot', methods=['POST'])
+def stop_bot():
+    """Stop auto-trading bot"""
+    global bot_running
+    bot_running = False
+    socketio.emit('log', {'message': 'Bot stopped', 'type': 'warning'})
+    return jsonify({'success': True})
+
+
+@app.route('/api/manual_trade', methods=['POST'])
+def manual_trade():
+    """Execute manual trade"""
+    if not client or not client.is_connected:
+        return jsonify({'success': False, 'error': 'Not connected'})
+    
+    data = request.json
+    asset = data.get('asset')
+    amount = float(data.get('amount', 10))
+    direction = data.get('direction')
+    
+    order_direction = OrderDirection.CALL if direction == 'CALL' else OrderDirection.PUT
+    duration = _get_duration_from_timeframe(current_timeframe)
+    
+    result = client.buy(asset, amount, order_direction, duration)
+    
+    if result:
+        return jsonify({'success': True, 'order_id': result.order_id})
+    else:
+        return jsonify({'success': False, 'error': 'Trade failed'})
+
+
+def _get_duration_from_timeframe(timeframe: str) -> int:
+    """Convert timeframe string to duration in seconds"""
+    timeframe_map = {
+        '1m': 60,
+        '2m': 120,
+        '3m': 180,
+        '5m': 300
+    }
+    return timeframe_map.get(timeframe, 60)
+
+
+def _get_expiry_from_timeframe(timeframe: str) -> int:
+    """Get expiry minutes for signal"""
+    expiry_map = {
+        '1m': 2,
+        '2m': 3,
+        '3m': 4,
+        '5m': 5
+    }
+    return expiry_map.get(timeframe, 2)
+
+
+def _get_candle_interval(timeframe: str) -> int:
+    """Get candle interval in seconds for subscription"""
+    interval_map = {
+        '1m': 60,
+        '2m': 120,
+        '3m': 180,
+        '5m': 300
+    }
+    return interval_map.get(timeframe, 60)
+
+
+def _calculate_time_to_next_candle(timeframe_seconds: int) -> int:
+    """Calculate seconds until next candle closes (for 30s pre-candle signal)"""
+    current_time = time.time()
+    
+    # Calculate when current candle started
+    candle_start = int(current_time / timeframe_seconds) * timeframe_seconds
+    
+    # Calculate when candle will end
+    candle_end = candle_start + timeframe_seconds
+    
+    # Signal should be sent 30 seconds before candle ends
+    signal_time = candle_end - 30
+    
+    time_remaining = signal_time - current_time
+    
+    return max(0, int(time_remaining))
+
+
+def _bot_loop():
+    """Main bot loop - runs in background thread"""
+    global martingale_state, trade_stats
+    
+    timeframe_seconds = _get_candle_interval(current_timeframe)
+    candle_data = []
+    
+    # Callback for candle updates
+    def on_candle(asset, timeframe, candle):
+        if asset != current_asset:
+            return
+        
+        candle_data.append({
+            'timestamp': candle.timestamp,
+            'open': candle.open,
+            'high': candle.high,
+            'low': candle.low,
+            'close': candle.close,
+            'volume': candle.volume
+        })
+        
+        # Keep only last 200 candles
+        while len(candle_data) > 200:
+            candle_data.pop(0)
+        
+        # Check if it's time to generate signal (30 seconds before candle closes)
+        time_remaining = _calculate_time_to_next_candle(timeframe_seconds)
+        
+        if time_remaining <= 30 and time_remaining >= 0:
+            # Generate signal
+            if len(candle_data) >= 50:
+                strategy = TradingStrategy(timeframe=current_timeframe)
+                signal = strategy.analyze(candle_data)
+                
+                # Add time remaining to signal
+                signal_dict = {
+                    'direction': signal.direction,
+                    'confidence': signal.confidence,
+                    'signal_type': signal.signal_type,
+                    'price': signal.price,
+                    'expiry_minutes': signal.expiry_minutes,
+                    'rules_passed': signal.rules_passed,
+                    'details': signal.details,
+                    'time_remaining': time_remaining
+                }
+                
+                socketio.emit('signal', signal_dict)
+                
+                # Auto-trade if bot is running and signal is strong enough
+                if bot_running and signal.direction in ['CALL', 'PUT'] and signal.confidence >= 60:
+                    _execute_trade(signal.direction, signal.price)
+    
+    # Subscribe to candles
+    client.subscribe_candles(current_asset, timeframe_seconds, on_candle)
+    
+    # Register order result callback
+    def on_order_result(result):
+        global trade_stats, martingale_state
+        
+        trade_stats['total_trades'] += 1
+        trade_stats['last_trade_time'] = datetime.now()
+        
+        if result.is_win:
+            trade_stats['winning_trades'] += 1
+            trade_stats['daily_pl'] += result.profit
+            trade_stats['last_trade'] = f"WIN on {result.asset}: +${result.profit:.2f}"
+            
+            socketio.emit('trade_result', {
+                'is_win': True,
+                'profit': result.profit,
+                'asset': result.asset,
+                'direction': result.direction,
+                'amount': result.amount
+            })
+            
+            # Reset martingale on win
+            if martingale_state['active']:
+                martingale_state = {
+                    "active": False,
+                    "step": 0,
+                    "current_amount": 0,
+                    "total_loss": 0,
+                    "original_direction": None
+                }
+                socketio.emit('log', {'message': 'Martingale sequence completed - WIN achieved!', 'type': 'success'})
+        else:
+            trade_stats['daily_pl'] -= result.amount
+            trade_stats['last_trade'] = f"LOSS on {result.asset}: -${result.amount:.2f}"
+            
+            socketio.emit('trade_result', {
+                'is_win': False,
+                'profit': 0,
+                'asset': result.asset,
+                'direction': result.direction,
+                'amount': result.amount
+            })
+            
+            # Handle martingale recovery
+            if martingale_enabled and bot_running:
+                if not martingale_state['active']:
+                    # Start new martingale sequence
+                    martingale_state['active'] = True
+                    martingale_state['step'] = 1
+                    martingale_state['current_amount'] = current_amount
+                    martingale_state['total_loss'] = result.amount
+                    martingale_state['original_direction'] = result.direction
+                else:
+                    # Continue existing sequence
+                    martingale_state['step'] += 1
+                    martingale_state['current_amount'] = martingale_state['current_amount'] * 2.3
+                    martingale_state['total_loss'] += result.amount
+                
+                socketio.emit('log', {
+                    'message': f"Martingale activated: Step {martingale_state['step']} | Next trade: ${martingale_state['current_amount'] * 2.3:.2f}",
+                    'type': 'warning'
+                })
+                
+                # Execute next martingale trade immediately
+                _execute_trade(martingale_state['original_direction'], None, martingale=True)
+    
+    client.on_order_result(on_order_result)
+    
+    # Keep thread alive
+    while bot_running:
+        time.sleep(0.1)
+    
+    socketio.emit('log', {'message': 'Bot loop ended', 'type': 'info'})
+
+
+def _execute_trade(direction: str, price: float = None, martingale: bool = False):
+    """Execute a trade"""
+    global martingale_state
+    
+    if not client or not client.is_connected:
+        return
+    
+    # Determine amount
+    if martingale and martingale_state['active']:
+        amount = martingale_state['current_amount'] * 2.3
+    else:
+        amount = current_amount
+    
+    # Ensure minimum amount
+    if amount < 1:
+        amount = current_amount
+    
+    duration = _get_duration_from_timeframe(current_timeframe)
+    order_direction = OrderDirection.CALL if direction == 'CALL' else OrderDirection.PUT
+    
+    result = client.buy(current_asset, amount, order_direction, duration)
+    
+    if result:
+        socketio.emit('log', {
+            'message': f"Auto-trade: {direction} ${amount:.2f} on {current_asset}",
+            'type': 'info'
+        })
+
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle client WebSocket connection"""
+    emit('log', {'message': 'Connected to PO TRADING MATE server', 'type': 'success'})
+
+
+if __name__ == '__main__':
+    print("""
+    ╔══════════════════════════════════════════════════════════════════╗
+    ║                                                                  ║
+    ║     ██████╗  ██████╗     ████████╗██████╗  █████╗ ██████╗ ██╗   ║
+    ║     ██╔══██╗██╔══██╗    ╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╗   ║
+    ║     ██████╔╝██████╔╝       ██║   ██║  ██║███████║██████╔╝██║   ║
+    ║     ██╔═══╝ ██╔══██╗       ██║   ██║  ██║██╔══██║██╔══██╗██║   ║
+    ║     ██║     ██║  ██║       ██║   ██████╔╝██║  ██║██║  ██║███████╗
+    ║     ╚═╝     ╚═╝  ╚═╝       ╚═╝   ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+    ║                                                                  ║
+    ║                         ███╗   ███╗ █████╗ ████████╗███████╗     ║
+    ║                         ████╗ ████║██╔══██╗╚══██╔══╝██╔════╝     ║
+    ║                         ██╔████╔██║███████║   ██║   █████╗       ║
+    ║                         ██║╚██╔╝██║██╔══██║   ██║   ██╔══╝       ║
+    ║                         ██║ ╚═╝ ██║██║  ██║   ██║   ███████╗     ║
+    ║                         ╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝     ║
+    ║                                                                  ║
+    ║                    POCKET OPTION TRADING BOT                     ║
+    ║                                                                  ║
+    ╚══════════════════════════════════════════════════════════════════╝
+    """)
+    print("\n🚀 PO TRADING MATE is starting...")
+    print("📍 Open your browser and go to: http://localhost:5000")
+    print("=" * 60)
+    
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
