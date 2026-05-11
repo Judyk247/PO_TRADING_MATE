@@ -426,11 +426,24 @@ def handle_connect():
     emit('log', {'message': 'Connected to PO TRADING MATE server', 'type': 'success'})
 
 
-# For production with Gunicorn (Render)
-# The app is exported as 'application' for Gunicorn to use
-application = app
+# ============================================================
+# RENDER DEPLOYMENT - Use 'python bot.py' as start command
+# ============================================================
 
 if __name__ == '__main__':
-    # For local development only
-    # Use this command for local testing: python bot.py
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    # Get the port from environment variable (Render sets this automatically)
+    port = int(os.environ.get('PORT', 10000))
+    
+    # For local development, you can also use port 5000
+    # For Render, it will use the PORT environment variable
+    print(f"🚀 PO TRADING MATE starting on port {port}")
+    print(f"📍 Open your browser to: http://localhost:{port}")
+    
+    # Run the app with SocketIO
+    socketio.run(
+        app, 
+        host='0.0.0.0', 
+        port=port, 
+        debug=False,  # Set to False for production
+        allow_unsafe_werkzeug=True  # Required for production
+    )
