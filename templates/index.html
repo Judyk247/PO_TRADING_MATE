@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PO TRADING MATE - Pocket Option Trading Bot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">
+                <span class="bot-name">PO TRADING MATE</span>
+                <span class="tagline">⚡ Auto Trading Bot</span>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot disconnected"></span>
+                <span id="statusText">Disconnected</span>
+            </div>
+        </div>
+
+        <!-- Balance Display -->
+        <div class="balance-bar">
+            <div class="balance-item">
+                <span class="balance-label">💰 BALANCE</span>
+                <span class="balance-value" id="balance">$0.00</span>
+            </div>
+            <div class="balance-item">
+                <span class="balance-label">📈 TODAY'S P/L</span>
+                <span class="balance-value" id="dailyPL">$0.00</span>
+            </div>
+            <div class="balance-item">
+                <span class="balance-label">🎯 WIN RATE</span>
+                <span class="balance-value" id="winRate">0%</span>
+            </div>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="platform">📊 PLATFORM</button>
+            <button class="tab-btn" data-tab="robot">🤖 ROBOT</button>
+            <button class="tab-btn" data-tab="support">📚 SUPPORT</button>
+            <button class="tab-btn" data-tab="account">👤 ACCOUNT</button>
+        </div>
+
+        <!-- Tab Content: PLATFORM -->
+        <div id="platform" class="tab-content active">
+            <div class="platform-container">
+                <div class="platform-header">
+                    <h3>📈 POCKET OPTION TRADING PLATFORM</h3>
+                    <p>View market performance - Trade manually if desired</p>
+                </div>
+                <div class="platform-embed">
+                    <div class="embed-placeholder">
+                        <div class="placeholder-icon">📱</div>
+                        <div class="placeholder-text">Pocket Option Platform View</div>
+                        <div class="placeholder-note">Open Pocket Option in new tab for full trading interface</div>
+                        <a href="https://pocketoption.com" target="_blank" class="open-platform-btn">🔗 OPEN POCKET OPTION</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: ROBOT (Command Center) -->
+        <div id="robot" class="tab-content">
+            <!-- Trading Controls -->
+            <div class="card">
+                <div class="card-title">🎮 TRADING CONTROLS</div>
+                <div class="control-group">
+                    <div class="control-item">
+                        <label>💰 AMOUNT</label>
+                        <select id="amount" class="control-select">
+                            <option value="5">$5</option>
+                            <option value="10" selected>$10</option>
+                            <option value="25">$25</option>
+                            <option value="50">$50</option>
+                            <option value="100">$100</option>
+                        </select>
+                    </div>
+                    <div class="control-item">
+                        <label>⏱️ TIMEFRAME</label>
+                        <select id="timeframe" class="control-select">
+                            <option value="1m">1 Minute (Trend)</option>
+                            <option value="2m">2 Minutes (Trend)</option>
+                            <option value="3m">3 Minutes (Trend)</option>
+                            <option value="5m" selected>5 Minutes (Reversal)</option>
+                        </select>
+                    </div>
+                    <div class="control-item">
+                        <label>📊 ASSET</label>
+                        <select id="asset" class="control-select">
+                            <option value="">Loading assets...</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="quick-presets">
+                    <span class="preset-label">QUICK AMOUNT:</span>
+                    <button class="preset-btn" data-amount="5">$5</button>
+                    <button class="preset-btn" data-amount="10">$10</button>
+                    <button class="preset-btn" data-amount="25">$25</button>
+                    <button class="preset-btn" data-amount="50">$50</button>
+                    <button class="preset-btn" data-amount="100">$100</button>
+                </div>
+            </div>
+
+            <!-- Martingale Control -->
+            <div class="card martingale-card">
+                <div class="card-title">♻️ MARTINGALE CONTROL</div>
+                <div class="martingale-toggle">
+                    <span class="toggle-label">MARTINGALE MODE:</span>
+                    <div class="toggle-switch">
+                        <button id="martingaleOn" class="toggle-btn toggle-on">🔘 ON</button>
+                        <button id="martingaleOff" class="toggle-btn toggle-off">⚪ OFF</button>
+                    </div>
+                    <span class="multiplier-info">Multiplier: <strong>2.3x</strong></span>
+                    <span class="steps-info">Steps: <strong>Unlimited</strong></span>
+                </div>
+                <div id="martingaleStatus" class="martingale-status" style="display: none;">
+                    <div class="status-item">📊 Current Step: <span id="martingaleStep">0</span></div>
+                    <div class="status-item">💰 Total Loss: <span id="martingaleLoss">$0.00</span></div>
+                    <div class="status-item">🎯 Next Amount: <span id="martingaleNext">$0.00</span></div>
+                </div>
+            </div>
+
+            <!-- Bot Control Buttons -->
+            <div class="card bot-controls">
+                <button id="startBot" class="btn-start">▶ START BOT</button>
+                <button id="stopBot" class="btn-stop">⏹ STOP BOT</button>
+            </div>
+
+            <!-- Signal Display -->
+            <div class="card signal-card">
+                <div class="card-title">🔔 CURRENT SIGNAL</div>
+                <div id="signalDisplay" class="signal-display">
+                    <div class="signal-placeholder">Waiting for signal...</div>
+                </div>
+                <div id="countdownTimer" class="countdown-timer"></div>
+                <div class="confidence-meter">
+                    <div class="confidence-label">CONFIDENCE METER</div>
+                    <div class="confidence-bar-container">
+                        <div id="confidenceBar" class="confidence-bar" style="width: 0%;"></div>
+                    </div>
+                    <div id="confidenceValue" class="confidence-value">0%</div>
+                </div>
+            </div>
+
+            <!-- Manual Trade Execution -->
+            <div class="card manual-trade">
+                <div class="card-title">💰 MANUAL TRADE EXECUTION</div>
+                <div class="manual-buttons">
+                    <button id="manualCall" class="btn-call">📈 BUY CALL</button>
+                    <button id="manualPut" class="btn-put">📉 BUY PUT</button>
+                </div>
+            </div>
+
+            <!-- Strategy Rules -->
+            <div class="card rules-card">
+                <div class="card-title">✅ STRATEGY RULES PASSED</div>
+                <ul id="rulesList" class="rules-list">
+                    <li>No signal generated yet</li>
+                </ul>
+            </div>
+
+            <!-- Trade Statistics -->
+            <div class="card stats-card">
+                <div class="card-title">📊 TRADE STATISTICS</div>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">BOT STATUS</div>
+                        <div id="botStatus" class="stat-value stopped">⏹ STOPPED</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">TODAY'S TRADES</div>
+                        <div id="tradeCount" class="stat-value">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">NET PROFIT</div>
+                        <div id="netProfit" class="stat-value">$0.00</div>
+                    </div>
+                </div>
+                <div class="last-trade">
+                    <span class="last-trade-label">LAST TRADE:</span>
+                    <span id="lastTrade" class="last-trade-value">--</span>
+                </div>
+            </div>
+
+            <!-- Sound Alerts Control -->
+            <div class="card sound-card">
+                <div class="card-title">🎵 SOUND ALERTS</div>
+                <div class="sound-toggle">
+                    <button id="soundOn" class="sound-btn sound-on">🔊 ON</button>
+                    <button id="soundOff" class="sound-btn sound-off">🔇 OFF</button>
+                </div>
+            </div>
+
+            <!-- Log Console -->
+            <div class="card log-card">
+                <div class="card-title">📋 LOG CONSOLE</div>
+                <div id="logConsole" class="log-console">
+                    <div class="log-entry">🟢 PO TRADING MATE initialized</div>
+                    <div class="log-entry">📡 Waiting for connection...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: SUPPORT -->
+        <div id="support" class="tab-content">
+            <div class="card">
+                <div class="card-title">📚 DOCUMENTATION & SUPPORT</div>
+                <div class="support-content">
+                    <h3>🎯 Strategy Overview</h3>
+                    <p><strong>Trend Following (1m, 2m, 3m):</strong> Follows established trend with Alligator alignment, EMA slope confirmation, and Stochastic in 20-40/60-80 zones.</p>
+                    <p><strong>Reversal (5m):</strong> Counter-trend trading at support/resistance with Alligator contraction, Stochastic oversold/overbought, and fractal confirmation.</p>
+                    
+                    <h3>⚙️ Martingale System</h3>
+                    <p>When enabled, after a loss the bot will place a new trade at <strong>2.3x</strong> the previous amount, continuing until a win is achieved (unlimited steps).</p>
+                    
+                    <h3>⏱️ Signal Timing</h3>
+                    <p>Signals are generated <strong>30 seconds before each candle closes</strong>, giving you time to execute manual trades or allowing auto-trading to trigger.</p>
+                    
+                    <h3>🔒 Risk Warning</h3>
+                    <p>Trading binary options involves substantial risk. Never trade more than you can afford to lose. Past performance does not guarantee future results.</p>
+                    
+                    <h3>📞 Support</h3>
+                    <p>For issues or questions, contact support at: <strong>support@potradingmate.com</strong></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: ACCOUNT -->
+        <div id="account" class="tab-content">
+            <div class="card">
+                <div class="card-title">👤 ACCOUNT SETTINGS</div>
+                <div class="account-form">
+                    <div class="form-group">
+                        <label>📧 POCKET OPTION EMAIL</label>
+                        <input type="email" id="email" placeholder="Enter your email" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>🔑 POCKET OPTION PASSWORD</label>
+                        <input type="password" id="password" placeholder="Enter your password" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>🏦 ACCOUNT TYPE</label>
+                        <select id="accountType" class="form-select">
+                            <option value="demo" selected>💰 DEMO ACCOUNT</option>
+                            <option value="real">💸 REAL ACCOUNT</option>
+                        </select>
+                    </div>
+                    <div class="form-buttons">
+                        <button id="connectBtn" class="btn-connect">🔌 CONNECT</button>
+                        <button id="disconnectBtn" class="btn-disconnect">🔌 DISCONNECT</button>
+                    </div>
+                    <div class="payout-filter">
+                        <span class="filter-label">🎯 MINIMUM PAYOUT FILTER:</span>
+                        <span class="filter-value">85%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Navigation Menu -->
+        <div class="bottom-nav">
+            <div class="nav-item" data-tab="platform">📊 PLATFORM</div>
+            <div class="nav-item" data-tab="robot">🤖 ROBOT</div>
+            <div class="nav-item" data-tab="support">📚 SUPPORT</div>
+            <div class="nav-item" data-tab="account">👤 ACCOUNT</div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+  </html>
