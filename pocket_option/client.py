@@ -1,8 +1,3 @@
----
-
-## 📄 File 4: `pocket_option/client.py`
-
-```python
 """
 PO TRADING MATE - Pocket Option API Client
 Email/Password authentication, market data, trade execution
