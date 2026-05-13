@@ -13,7 +13,7 @@
         .tagline{font-size:12px;color:#ffd700}
         .status{text-align:center;padding:10px;font-weight:bold;background:#0f1a4a;color:white}
         .tab-bar{display:flex;background:#0f1a4a}
-        .tab{flex:1;text-align:center;padding:12px;font-weight:bold;color:#87CEEB;background:transparent;border:none}
+        .tab{flex:1;text-align:center;padding:12px;font-weight:bold;color:#87CEEB;background:transparent;border:none;cursor:pointer}
         .tab.active{background:#87CEEB;color:#1a2a6a}
         .page{display:none;padding:15px}
         .page.active{display:block}
@@ -21,15 +21,16 @@
         .card-title{font-weight:bold;color:#1a2a6a;margin-bottom:10px;border-bottom:2px solid #87CEEB;padding-bottom:5px}
         .row{display:flex;justify-content:space-between;align-items:center;margin:10px 0;flex-wrap:wrap}
         select,input{padding:8px;border:1px solid #87CEEB;border-radius:5px}
-        .btn-start{background:#28a745;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
-        .btn-stop{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
-        .btn-call{background:#28a745;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
-        .btn-put{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
-        .btn-connect{background:#28a745;color:white;padding:10px;border:none;border-radius:5px;font-weight:bold;width:48%}
-        .toggle-btn{padding:8px 20px;border:none;border-radius:30px;font-weight:bold}
+        .btn-start{background:#28a745;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%;cursor:pointer}
+        .btn-stop{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%;cursor:pointer}
+        .btn-call{background:#28a745;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%;cursor:pointer}
+        .btn-put{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%;cursor:pointer}
+        .btn-connect{background:#28a745;color:white;padding:10px;border:none;border-radius:5px;font-weight:bold;width:48%;cursor:pointer}
+        .btn-disconnect{background:#dc3545;color:white;padding:10px;border:none;border-radius:5px;font-weight:bold;width:48%;cursor:pointer}
+        .toggle-btn{padding:8px 20px;border:none;border-radius:30px;font-weight:bold;cursor:pointer}
         .toggle-on{background:#ffd700;color:#1a2a6a}
         .toggle-off{background:#ccc;color:#666}
-        .preset{background:#1a2a6a;color:white;padding:5px 12px;border:none;border-radius:20px}
+        .preset{background:#1a2a6a;color:white;padding:5px 12px;border:none;border-radius:20px;cursor:pointer}
         .signal{text-align:center;padding:20px;border-radius:10px}
         .signal-call{background:#28a745;color:white}
         .signal-put{background:#dc3545;color:white}
@@ -40,6 +41,7 @@
         .form-group input,.form-group select{width:100%;padding:10px}
         .mb-10{margin-bottom:10px}
         .text-center{text-align:center}
+        button{cursor:pointer}
     </style>
 </head>
 <body>
@@ -117,29 +119,49 @@
             <p><strong>Reversal (5m):</strong> Overshoot + Contraction + Fractals</p>
             <p><strong>Martingale:</strong> 2.3x after loss, unlimited steps</p>
             <p><strong>Signals:</strong> 30 seconds before candle close</p>
+            <p><strong>Payout Filter:</strong> 85% minimum</p>
         </div>
     </div>
 
     <!-- Account Page -->
     <div id="page-account" class="page">
         <div class="card">
-            <div class="card-title">👤 CONNECT</div>
+            <div class="card-title">👤 CONNECT TO POCKET OPTION</div>
             <div class="form-group"><label>📧 EMAIL</label><input type="email" id="email" placeholder="Your Pocket Option email"></div>
             <div class="form-group"><label>🔑 PASSWORD</label><input type="password" id="password" placeholder="Your password"></div>
-            <div class="form-group"><label>🏦 TYPE</label><select id="accountType"><option value="demo">DEMO</option><option value="real">REAL</option></select></div>
-            <div class="flex"><button id="connectBtn" class="btn-connect" onclick="connectAPI()">🔌 CONNECT</button><button class="btn-connect" style="background:#6c757d" onclick="disconnectAPI()">🔌 DISCONNECT</button></div>
+            <div class="form-group"><label>🏦 ACCOUNT TYPE</label><select id="accountType"><option value="demo">💰 DEMO ACCOUNT</option><option value="real">💸 REAL ACCOUNT</option></select></div>
+            <div class="flex">
+                <button class="btn-connect" onclick="connectToPocketOption()">🔌 CONNECT</button>
+                <button class="btn-disconnect" onclick="disconnectFromPocketOption()">🔌 DISCONNECT</button>
+            </div>
+            <div class="form-group" style="margin-top:15px">
+                <label>🎯 MIN PAYOUT:</label>
+                <span style="font-weight:bold;color:#1a2a6a">85%</span>
+            </div>
         </div>
     </div>
 </div>
 
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <script>
+// Page switching
 function showPage(name){
     document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
     document.getElementById('page-'+name).classList.add('active');
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-    event.target.classList.add('active');
+    // Find the clicked tab and mark active
+    for(let t of document.querySelectorAll('.tab')){
+        if(t.textContent.includes(name.toUpperCase()) || 
+           (name==='platform' && t.textContent.includes('PLATFORM')) ||
+           (name==='robot' && t.textContent.includes('ROBOT')) ||
+           (name==='support' && t.textContent.includes('SUPPORT')) ||
+           (name==='account' && t.textContent.includes('ACCOUNT'))){
+            t.classList.add('active');
+        }
+    }
 }
+
+// Add log message
 function addLog(msg){
     let logDiv=document.getElementById('logConsole');
     let time=new Date().toLocaleTimeString();
@@ -148,89 +170,210 @@ function addLog(msg){
     logDiv.insertBefore(newLog,logDiv.firstChild);
     while(logDiv.children.length>15) logDiv.removeChild(logDiv.lastChild);
 }
+
+// Martingale toggle
 function setMartingale(on){
     let onBtn=document.getElementById('mgOn'), offBtn=document.getElementById('mgOff');
     if(on){
         onBtn.classList.add('toggle-on'); onBtn.classList.remove('toggle-off');
         offBtn.classList.add('toggle-off'); offBtn.classList.remove('toggle-on');
-        addLog('Martingale ON');
+        addLog('♻️ Martingale ENABLED');
     }else{
         offBtn.classList.add('toggle-on'); offBtn.classList.remove('toggle-off');
         onBtn.classList.add('toggle-off'); onBtn.classList.remove('toggle-on');
-        addLog('Martingale OFF');
+        addLog('♻️ Martingale DISABLED');
     }
 }
-async function connectAPI(){
+
+// Connect to Pocket Option
+async function connectToPocketOption(){
     let email=document.getElementById('email').value;
     let pass=document.getElementById('password').value;
     let type=document.getElementById('accountType').value;
-    if(!email||!pass){alert('Enter email/password');return;}
-    addLog('Connecting...');
+    
+    if(!email||!pass){
+        alert('Please enter email and password');
+        return;
+    }
+    
+    addLog('🔐 Connecting to Pocket Option...');
+    document.getElementById('status').innerHTML='🟡 Connecting...';
+    
     try{
-        let res=await fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pass,account_type:type})});
+        let res=await fetch('/api/connect',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({email:email,password:pass,account_type:type})
+        });
         let data=await res.json();
+        
         if(data.success){
-            addLog('Connected! Balance: $'+data.balance);
-            document.getElementById('status').innerHTML='🟢 Connected | $'+data.balance;
-            await loadAssetsAPI();
-        }else{addLog('Failed: '+data.error);}
-    }catch(e){addLog('Error: '+e.message);}
+            addLog('✅ Connected! Balance: $'+data.balance);
+            document.getElementById('status').innerHTML='🟢 Connected | Balance: $'+data.balance;
+            await loadAssets();
+        }else{
+            addLog('❌ Connection failed: '+data.error);
+            document.getElementById('status').innerHTML='🔴 Disconnected';
+            alert('Connection failed: '+data.error);
+        }
+    }catch(error){
+        addLog('❌ Error: '+error.message);
+        document.getElementById('status').innerHTML='🔴 Disconnected';
+        alert('Error: '+error.message);
+    }
 }
-async function disconnectAPI(){
-    await fetch('/api/disconnect',{method:'POST'});
-    addLog('Disconnected');
-    document.getElementById('status').innerHTML='🔴 Disconnected';
+
+// Disconnect from Pocket Option
+async function disconnectFromPocketOption(){
+    try{
+        await fetch('/api/disconnect',{method:'POST'});
+        addLog('🔌 Disconnected');
+        document.getElementById('status').innerHTML='🔴 Disconnected';
+    }catch(e){
+        addLog('Error disconnecting: '+e.message);
+    }
 }
-async function loadAssetsAPI(){
+
+// Load assets
+async function loadAssets(){
     try{
         let res=await fetch('/api/assets');
         let assets=await res.json();
         let sel=document.getElementById('asset');
-        sel.innerHTML='';
-        assets.forEach(a=>{let opt=document.createElement('option');opt.value=a.symbol;opt.textContent=`${a.name} - ${a.payout}%`;sel.appendChild(opt);});
-        addLog('Loaded '+assets.length+' assets');
-    }catch(e){addLog('Assets error: '+e.message);}
+        if(sel){
+            sel.innerHTML='';
+            assets.forEach(a=>{
+                let opt=document.createElement('option');
+                opt.value=a.symbol;
+                opt.textContent=`${a.name} - ${a.payout}%`;
+                sel.appendChild(opt);
+            });
+            addLog('📊 Loaded '+assets.length+' assets with 85%+ payout');
+        }
+    }catch(e){
+        addLog('❌ Failed to load assets: '+e.message);
+    }
 }
+
+// Start bot
 async function startBot(){
     let asset=document.getElementById('asset').value;
     let amount=parseFloat(document.getElementById('amount').value);
     let tf=document.getElementById('timeframe').value;
-    let mg=document.getElementById('mgOn').classList.contains('toggle-on');
-    addLog(`Start bot: ${asset} $${amount} ${tf}`);
-    document.getElementById('botStatus').innerHTML='RUNNING';
-    await fetch('/api/start_bot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset,amount,timeframe:tf,martingale:mg})});
+    let mgOn=document.getElementById('mgOn');
+    let martingale=mgOn ? mgOn.classList.contains('toggle-on') : false;
+    
+    addLog(`🤖 Starting bot | ${asset} | $${amount} | ${tf}`);
+    document.getElementById('botStatus').innerHTML='▶ RUNNING';
+    
+    try{
+        await fetch('/api/start_bot',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({asset,amount,timeframe:tf,martingale})
+        });
+    }catch(e){
+        addLog('Error: '+e.message);
+    }
 }
+
+// Stop bot
 async function stopBot(){
-    addLog('Stop bot');
-    document.getElementById('botStatus').innerHTML='STOPPED';
-    await fetch('/api/stop_bot',{method:'POST'});
+    addLog('🛑 Stopping bot...');
+    document.getElementById('botStatus').innerHTML='⏹ STOPPED';
+    try{
+        await fetch('/api/stop_bot',{method:'POST'});
+    }catch(e){
+        addLog('Error: '+e.message);
+    }
 }
-async function manualTrade(dir){
+
+// Manual trade
+async function manualTrade(direction){
     let asset=document.getElementById('asset').value;
     let amount=parseFloat(document.getElementById('amount').value);
-    addLog(`Manual ${dir} $${amount}`);
-    let res=await fetch('/api/manual_trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset,amount,direction:dir})});
-    let data=await res.json();
-    if(data.success) addLog(`${dir} executed`);
-    else addLog(`Failed: ${data.error}`);
+    addLog(`💰 Manual ${direction} trade: $${amount} on ${asset}`);
+    
+    try{
+        let res=await fetch('/api/manual_trade',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({asset,amount,direction})
+        });
+        let data=await res.json();
+        if(data.success){
+            addLog(`✅ ${direction} trade executed`);
+        }else{
+            addLog(`❌ Trade failed: ${data.error}`);
+        }
+    }catch(e){
+        addLog(`❌ Trade error: ${e.message}`);
+    }
 }
-document.querySelectorAll('.preset').forEach(btn=>btn.addEventListener('click',function(){document.getElementById('amount').value=this.dataset.amount;addLog(`Amount $${this.dataset.amount}`);}));
 
-const socket=io();
-socket.on('connect',()=>addLog('WebSocket connected'));
-socket.on('signal',(s)=>{
-    let box=document.getElementById('signalBox');
-    if(s.direction=='CALL'){box.className='signal signal-call';box.innerHTML='<strong>🟢 CALL SIGNAL 🟢</strong><br>Price: $'+s.price+'<br>Confidence: '+s.confidence+'%';}
-    else if(s.direction=='PUT'){box.className='signal signal-put';box.innerHTML='<strong>🔴 PUT SIGNAL 🔴</strong><br>Price: $'+s.price+'<br>Confidence: '+s.confidence+'%';}
-    else{box.className='signal signal-hold';box.innerHTML='<strong>⚪ HOLD ⚪</strong>';}
-    document.getElementById('confidenceFill').style.width=s.confidence+'%';
-    document.getElementById('confidenceVal').innerText=s.confidence;
-    if(s.rules_passed) document.getElementById('rulesList').innerHTML=s.rules_passed.map(r=>`<li>${r}</li>`).join('');
-    addLog(`Signal: ${s.direction} ${s.confidence}%`);
+// Quick amount presets
+document.querySelectorAll('.preset').forEach(btn=>{
+    btn.addEventListener('click',function(){
+        let amount=this.getAttribute('data-amount');
+        document.getElementById('amount').value=amount;
+        addLog(`💰 Amount set to $${amount}`);
+    });
 });
-socket.on('trade_result',(r)=>{if(r.is_win)addLog(`✅ WIN +$${r.profit}`);else addLog(`❌ LOSS -$${r.amount}`);});
-socket.on('log',(d)=>addLog(d.message));
-addLog('Ready! Go to ACCOUNT tab to connect');
+
+// Socket.IO for real-time updates
+const socket=io();
+
+socket.on('connect',function(){
+    addLog('🔌 WebSocket connected to server');
+});
+
+socket.on('signal',function(signal){
+    let box=document.getElementById('signalBox');
+    let confidenceFill=document.getElementById('confidenceFill');
+    let confidenceVal=document.getElementById('confidenceVal');
+    let rulesList=document.getElementById('rulesList');
+    
+    if(signal.direction==='CALL'){
+        box.className='signal signal-call';
+        box.innerHTML=`<strong>🟢 CALL SIGNAL 🟢</strong><br>Price: $${signal.price}<br>Confidence: ${signal.confidence}%<br>Type: ${signal.signal_type}`;
+    }else if(signal.direction==='PUT'){
+        box.className='signal signal-put';
+        box.innerHTML=`<strong>🔴 PUT SIGNAL 🔴</strong><br>Price: $${signal.price}<br>Confidence: ${signal.confidence}%<br>Type: ${signal.signal_type}`;
+    }else{
+        box.className='signal signal-hold';
+        box.innerHTML='<strong>⚪ HOLD ⚪</strong>';
+    }
+    
+    if(confidenceFill) confidenceFill.style.width=signal.confidence+'%';
+    if(confidenceVal) confidenceVal.textContent=signal.confidence;
+    
+    if(rulesList && signal.rules_passed){
+        rulesList.innerHTML=signal.rules_passed.map(r=>`<li>${r}</li>`).join('');
+    }
+    
+    addLog(`📊 Signal: ${signal.direction} with ${signal.confidence}% confidence`);
+});
+
+socket.on('trade_result',function(result){
+    if(result.is_win){
+        addLog(`✅ TRADE WIN! Profit: +$${result.profit.toFixed(2)}`);
+        let netProfit=document.getElementById('netProfit');
+        if(netProfit && result.net_profit) netProfit.textContent=`$${result.net_profit.toFixed(2)}`;
+    }else{
+        addLog(`❌ TRADE LOSS! Loss: -$${result.amount.toFixed(2)}`);
+    }
+    if(result.trade_count && document.getElementById('tradeCount')){
+        document.getElementById('tradeCount').textContent=result.trade_count;
+    }
+});
+
+socket.on('log',function(data){
+    addLog(data.message);
+});
+
+// Initialize
+addLog('🚀 PO TRADING MATE initialized');
+addLog('📡 Go to ACCOUNT tab and click CONNECT');
 </script>
 </body>
     </html>
