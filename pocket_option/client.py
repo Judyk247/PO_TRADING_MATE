@@ -3,6 +3,18 @@ PO TRADING MATE - Pocket Option API Client
 Email/Password authentication, market data, trade execution
 """
 
+# ============================================================
+# DNS FIX: Force using Google's public DNS to resolve pocketoption.com
+# This fixes the "Failed to resolve 'pocketoption.com'" error on Render
+# ============================================================
+import dns.resolver
+# Override default DNS resolver to use Google's public DNS servers
+dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+dns.resolver.default_resolver.nameservers = ['8.8.8.8', '8.8.4.4']
+
+# ============================================================
+# Regular imports
+# ============================================================
 import json
 import time
 import uuid
@@ -11,6 +23,38 @@ import threading
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
+
+# Force socket to use the DNS resolver we just configured
+import socket
+import dns.message
+import dns.query
+
+# Patch socket.getaddrinfo to use our custom DNS resolver
+original_getaddrinfo = socket.getaddrinfo
+
+def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    """Override DNS resolution to use Google DNS"""
+    try:
+        # If it's pocketoption.com, resolve it manually
+        if 'pocketoption.com' in host:
+            # Use dnspython to resolve with Google DNS
+            query = dns.message.make_query(host, dns.rdatatype.A)
+            response = dns.query.udp(query, '8.8.8.8', timeout=5)
+            if response.answer:
+                for answer in response.answer:
+                    for item in answer.items:
+                        if item.rdtype == dns.rdatatype.A:
+                            ip_address = str(item)
+                            # Call original with the resolved IP
+                            return original_getaddrinfo(ip_address, port, family, type, proto, flags)
+    except Exception as e:
+        print(f"DNS resolution fallback error: {e}")
+    
+    # Fall back to original
+    return original_getaddrinfo(host, port, family, type, proto, flags)
+
+# Apply the patch
+socket.getaddrinfo = patched_getaddrinfo
 
 import websocket
 import requests
@@ -81,10 +125,17 @@ class PocketOptionClient:
     def authenticate(self) -> bool:
         """Authenticate with Pocket Option"""
         try:
+            # Create session with timeout
             session = requests.Session()
-            session.get(f"{self.BASE_URL}/en", headers={
+            session.timeout = 30
+            
+            # First request to get cookies
+            print(f"🔍 Connecting to {self.BASE_URL}...")
+            response = session.get(f"{self.BASE_URL}/en", headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            })
+            }, timeout=30)
+            
+            print(f"📡 Got response: HTTP {response.status_code}")
             
             login_data = {
                 "email": self.email,
@@ -94,19 +145,23 @@ class PocketOptionClient:
                 "accountType": "1" if self.is_demo else "0"
             }
             
+            print(f"🔐 Attempting login for {self.email}...")
             response = session.post(
                 f"{self.BASE_URL}/api/v1/login",
                 json=login_data,
-                headers={"Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest"}
+                headers={"Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest"},
+                timeout=30
             )
             
             if response.status_code != 200:
                 logger.error(f"Login failed: HTTP {response.status_code}")
+                print(f"❌ Login failed: HTTP {response.status_code}")
                 return False
             
             result = response.json()
             if result.get("status") != "success":
                 logger.error(f"Login failed: {result.get('message', 'Unknown error')}")
+                print(f"❌ Login failed: {result.get('message', 'Unknown error')}")
                 return False
             
             for cookie in session.cookies:
@@ -116,14 +171,25 @@ class PocketOptionClient:
             
             if not self._ssid:
                 logger.error("Failed to extract SSID")
+                print("❌ Failed to extract SSID from cookies")
                 return False
             
             self._balance = self.get_balance()
             logger.info(f"✅ Authenticated! Balance: ${self._balance:.2f}")
+            print(f"✅ Authenticated! Balance: ${self._balance:.2f}")
             return True
             
+        except requests.exceptions.Timeout:
+            logger.error("Authentication timeout - server took too long to respond")
+            print("❌ Authentication timeout - server took too long to respond")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error: {e}")
+            print(f"❌ Connection error: {e}")
+            return False
         except Exception as e:
             logger.error(f"Authentication error: {e}")
+            print(f"❌ Authentication error: {e}")
             return False
     
     def connect_websocket(self) -> bool:
@@ -134,6 +200,7 @@ class PocketOptionClient:
         
         try:
             ws_url = f"{self.WS_URL}?ssid={self._ssid}"
+            print(f"🔌 Connecting WebSocket to {self.WS_URL}...")
             
             self._ws = websocket.WebSocketApp(
                 ws_url,
@@ -146,16 +213,23 @@ class PocketOptionClient:
             ws_thread = threading.Thread(target=self._ws.run_forever, daemon=True)
             ws_thread.start()
             
-            time.sleep(2)
+            # Wait for connection
+            time.sleep(3)
+            if self._connected:
+                print("✅ WebSocket connected successfully")
+            else:
+                print("⚠️ WebSocket connection may have failed")
             return self._connected
             
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
+            print(f"❌ WebSocket error: {e}")
             return False
     
     def _on_open(self, ws):
         self._connected = True
         logger.info("✅ WebSocket connected")
+        print("✅ WebSocket connection opened")
         
         # Send initial subscription
         subscribe_msg = {
@@ -183,10 +257,12 @@ class PocketOptionClient:
     
     def _on_error(self, ws, error):
         logger.error(f"WebSocket error: {error}")
+        print(f"❌ WebSocket error: {error}")
         self._connected = False
     
     def _on_close(self, ws, close_status_code, close_msg):
         logger.info("WebSocket disconnected")
+        print("🔌 WebSocket disconnected")
         self._connected = False
         
         for callback in self._connect_callbacks:
@@ -246,16 +322,20 @@ class PocketOptionClient:
             }
             self._ws.send(json.dumps(subscribe_msg))
             logger.info(f"Subscribed to {asset} {timeframe}s candles")
+            print(f"📊 Subscribed to {asset} {timeframe}s candles")
     
     def get_assets(self) -> List[Asset]:
         """Get all assets with 85%+ payout"""
         try:
+            print("📊 Fetching available assets...")
             response = requests.get(
                 f"{self.BASE_URL}/api/v1/assets",
-                headers={"Cookie": f"ssid={self._ssid}", "X-Requested-With": "XMLHttpRequest"}
+                headers={"Cookie": f"ssid={self._ssid}", "X-Requested-With": "XMLHttpRequest"},
+                timeout=30
             )
             
             if response.status_code != 200:
+                print(f"⚠️ Assets API returned HTTP {response.status_code}")
                 return []
             
             assets_data = response.json()
@@ -273,10 +353,12 @@ class PocketOptionClient:
                         is_active=asset_data.get("active", True)
                     ))
             
+            print(f"✅ Loaded {len(assets)} assets with 85%+ payout")
             return sorted(assets, key=lambda x: x.payout, reverse=True)
             
         except Exception as e:
             logger.error(f"Error fetching assets: {e}")
+            print(f"❌ Error fetching assets: {e}")
             return []
     
     def buy(self, asset: str, amount: float, direction: OrderDirection, duration: int) -> Optional[OrderResult]:
@@ -301,6 +383,7 @@ class PocketOptionClient:
         
         self._ws.send(json.dumps(order_msg))
         logger.info(f"📊 Order: {direction.value} ${amount} on {asset}")
+        print(f"📊 Order placed: {direction.value} ${amount} on {asset}")
         
         return OrderResult(
             order_id=order_id,
@@ -317,7 +400,8 @@ class PocketOptionClient:
         try:
             response = requests.get(
                 f"{self.BASE_URL}/api/v1/balance",
-                headers={"Cookie": f"ssid={self._ssid}", "X-Requested-With": "XMLHttpRequest"}
+                headers={"Cookie": f"ssid={self._ssid}", "X-Requested-With": "XMLHttpRequest"},
+                timeout=30
             )
             
             if response.status_code == 200:
@@ -341,6 +425,7 @@ class PocketOptionClient:
             self._ws.close()
         self._connected = False
         logger.info("Disconnected")
+        print("🔌 Disconnected from Pocket Option")
     
     @property
     def is_connected(self) -> bool:
