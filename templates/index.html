@@ -1,275 +1,236 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PO TRADING MATE - Pocket Option Trading Bot</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <title>PO TRADING MATE</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:Arial;background:#87CEEB;padding:10px}
+        .container{max-width:600px;margin:0 auto;background:white;border-radius:20px;overflow:hidden}
+        .header{background:#1a2a6a;padding:15px;text-align:center}
+        .bot-name{font-size:24px;font-weight:bold;color:white}
+        .tagline{font-size:12px;color:#ffd700}
+        .status{text-align:center;padding:10px;font-weight:bold;background:#0f1a4a;color:white}
+        .tab-bar{display:flex;background:#0f1a4a}
+        .tab{flex:1;text-align:center;padding:12px;font-weight:bold;color:#87CEEB;background:transparent;border:none}
+        .tab.active{background:#87CEEB;color:#1a2a6a}
+        .page{display:none;padding:15px}
+        .page.active{display:block}
+        .card{background:white;border-radius:10px;padding:15px;margin-bottom:15px;border:1px solid #ddd}
+        .card-title{font-weight:bold;color:#1a2a6a;margin-bottom:10px;border-bottom:2px solid #87CEEB;padding-bottom:5px}
+        .row{display:flex;justify-content:space-between;align-items:center;margin:10px 0;flex-wrap:wrap}
+        select,input{padding:8px;border:1px solid #87CEEB;border-radius:5px}
+        .btn-start{background:#28a745;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
+        .btn-stop{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
+        .btn-call{background:#28a745;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
+        .btn-put{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%}
+        .btn-connect{background:#28a745;color:white;padding:10px;border:none;border-radius:5px;font-weight:bold;width:48%}
+        .toggle-btn{padding:8px 20px;border:none;border-radius:30px;font-weight:bold}
+        .toggle-on{background:#ffd700;color:#1a2a6a}
+        .toggle-off{background:#ccc;color:#666}
+        .preset{background:#1a2a6a;color:white;padding:5px 12px;border:none;border-radius:20px}
+        .signal{text-align:center;padding:20px;border-radius:10px}
+        .signal-call{background:#28a745;color:white}
+        .signal-put{background:#dc3545;color:white}
+        .signal-hold{background:#6c757d;color:white}
+        .log{background:#1a1a2e;color:#0f0;font-family:monospace;font-size:10px;padding:10px;border-radius:10px;height:120px;overflow-y:auto}
+        .flex{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}
+        .form-group{margin-bottom:15px}
+        .form-group input,.form-group select{width:100%;padding:10px}
+        .mb-10{margin-bottom:10px}
+        .text-center{text-align:center}
+    </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="logo">
-                <span class="bot-name">PO TRADING MATE</span>
-                <span class="tagline">⚡ Auto Trading Bot</span>
-            </div>
-            <div class="connection-status" id="connectionStatus">
-                <span class="status-dot disconnected"></span>
-                <span id="statusText">Disconnected</span>
-            </div>
-        </div>
+<div class="container">
+    <div class="header">
+        <div class="bot-name">PO TRADING MATE</div>
+        <div class="tagline">⚡ Auto Trading Bot</div>
+    </div>
+    <div class="status" id="status">🔴 Disconnected</div>
 
-        <!-- Balance Display -->
-        <div class="balance-bar">
-            <div class="balance-item">
-                <span class="balance-label">💰 BALANCE</span>
-                <span class="balance-value" id="balance">$0.00</span>
-            </div>
-            <div class="balance-item">
-                <span class="balance-label">📈 TODAY'S P/L</span>
-                <span class="balance-value" id="dailyPL">$0.00</span>
-            </div>
-            <div class="balance-item">
-                <span class="balance-label">🎯 WIN RATE</span>
-                <span class="balance-value" id="winRate">0%</span>
-            </div>
-        </div>
+    <!-- Tabs -->
+    <div class="tab-bar">
+        <button class="tab active" onclick="showPage('platform')">📊 PLATFORM</button>
+        <button class="tab" onclick="showPage('robot')">🤖 ROBOT</button>
+        <button class="tab" onclick="showPage('support')">📚 SUPPORT</button>
+        <button class="tab" onclick="showPage('account')">👤 ACCOUNT</button>
+    </div>
 
-        <!-- Tab Navigation -->
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="platform">📊 PLATFORM</button>
-            <button class="tab-btn" data-tab="robot">🤖 ROBOT</button>
-            <button class="tab-btn" data-tab="support">📚 SUPPORT</button>
-            <button class="tab-btn" data-tab="account">👤 ACCOUNT</button>
-        </div>
-
-        <!-- Tab Content: PLATFORM -->
-        <div id="platform" class="tab-content active">
-            <div class="platform-container">
-                <div class="platform-header">
-                    <h3>📈 POCKET OPTION TRADING PLATFORM</h3>
-                    <p>View market performance - Trade manually if desired</p>
-                </div>
-                <div class="platform-embed">
-                    <div class="embed-placeholder">
-                        <div class="placeholder-icon">📱</div>
-                        <div class="placeholder-text">Pocket Option Platform View</div>
-                        <div class="placeholder-note">Open Pocket Option in new tab for full trading interface</div>
-                        <a href="https://pocketoption.com" target="_blank" class="open-platform-btn">🔗 OPEN POCKET OPTION</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab Content: ROBOT (Command Center) -->
-        <div id="robot" class="tab-content">
-            <!-- Trading Controls -->
-            <div class="card">
-                <div class="card-title">🎮 TRADING CONTROLS</div>
-                <div class="control-group">
-                    <div class="control-item">
-                        <label>💰 AMOUNT</label>
-                        <select id="amount" class="control-select">
-                            <option value="5">$5</option>
-                            <option value="10" selected>$10</option>
-                            <option value="25">$25</option>
-                            <option value="50">$50</option>
-                            <option value="100">$100</option>
-                        </select>
-                    </div>
-                    <div class="control-item">
-                        <label>⏱️ TIMEFRAME</label>
-                        <select id="timeframe" class="control-select">
-                            <option value="1m">1 Minute (Trend)</option>
-                            <option value="2m">2 Minutes (Trend)</option>
-                            <option value="3m">3 Minutes (Trend)</option>
-                            <option value="5m" selected>5 Minutes (Reversal)</option>
-                        </select>
-                    </div>
-                    <div class="control-item">
-                        <label>📊 ASSET</label>
-                        <select id="asset" class="control-select">
-                            <option value="">Loading assets...</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="quick-presets">
-                    <span class="preset-label">QUICK AMOUNT:</span>
-                    <button class="preset-btn" data-amount="5">$5</button>
-                    <button class="preset-btn" data-amount="10">$10</button>
-                    <button class="preset-btn" data-amount="25">$25</button>
-                    <button class="preset-btn" data-amount="50">$50</button>
-                    <button class="preset-btn" data-amount="100">$100</button>
-                </div>
-            </div>
-
-            <!-- Martingale Control -->
-            <div class="card martingale-card">
-                <div class="card-title">♻️ MARTINGALE CONTROL</div>
-                <div class="martingale-toggle">
-                    <span class="toggle-label">MARTINGALE MODE:</span>
-                    <div class="toggle-switch">
-                        <button id="martingaleOn" class="toggle-btn toggle-on">🔘 ON</button>
-                        <button id="martingaleOff" class="toggle-btn toggle-off">⚪ OFF</button>
-                    </div>
-                    <span class="multiplier-info">Multiplier: <strong>2.3x</strong></span>
-                    <span class="steps-info">Steps: <strong>Unlimited</strong></span>
-                </div>
-                <div id="martingaleStatus" class="martingale-status" style="display: none;">
-                    <div class="status-item">📊 Current Step: <span id="martingaleStep">0</span></div>
-                    <div class="status-item">💰 Total Loss: <span id="martingaleLoss">$0.00</span></div>
-                    <div class="status-item">🎯 Next Amount: <span id="martingaleNext">$0.00</span></div>
-                </div>
-            </div>
-
-            <!-- Bot Control Buttons -->
-            <div class="card bot-controls">
-                <button id="startBot" class="btn-start">▶ START BOT</button>
-                <button id="stopBot" class="btn-stop">⏹ STOP BOT</button>
-            </div>
-
-            <!-- Signal Display -->
-            <div class="card signal-card">
-                <div class="card-title">🔔 CURRENT SIGNAL</div>
-                <div id="signalDisplay" class="signal-display">
-                    <div class="signal-placeholder">Waiting for signal...</div>
-                </div>
-                <div id="countdownTimer" class="countdown-timer"></div>
-                <div class="confidence-meter">
-                    <div class="confidence-label">CONFIDENCE METER</div>
-                    <div class="confidence-bar-container">
-                        <div id="confidenceBar" class="confidence-bar" style="width: 0%;"></div>
-                    </div>
-                    <div id="confidenceValue" class="confidence-value">0%</div>
-                </div>
-            </div>
-
-            <!-- Manual Trade Execution -->
-            <div class="card manual-trade">
-                <div class="card-title">💰 MANUAL TRADE EXECUTION</div>
-                <div class="manual-buttons">
-                    <button id="manualCall" class="btn-call">📈 BUY CALL</button>
-                    <button id="manualPut" class="btn-put">📉 BUY PUT</button>
-                </div>
-            </div>
-
-            <!-- Strategy Rules -->
-            <div class="card rules-card">
-                <div class="card-title">✅ STRATEGY RULES PASSED</div>
-                <ul id="rulesList" class="rules-list">
-                    <li>No signal generated yet</li>
-                </ul>
-            </div>
-
-            <!-- Trade Statistics -->
-            <div class="card stats-card">
-                <div class="card-title">📊 TRADE STATISTICS</div>
-                <div class="stats-grid">
-                    <div class="stat-box">
-                        <div class="stat-label">BOT STATUS</div>
-                        <div id="botStatus" class="stat-value stopped">⏹ STOPPED</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">TODAY'S TRADES</div>
-                        <div id="tradeCount" class="stat-value">0</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">NET PROFIT</div>
-                        <div id="netProfit" class="stat-value">$0.00</div>
-                    </div>
-                </div>
-                <div class="last-trade">
-                    <span class="last-trade-label">LAST TRADE:</span>
-                    <span id="lastTrade" class="last-trade-value">--</span>
-                </div>
-            </div>
-
-            <!-- Sound Alerts Control -->
-            <div class="card sound-card">
-                <div class="card-title">🎵 SOUND ALERTS</div>
-                <div class="sound-toggle">
-                    <button id="soundOn" class="sound-btn sound-on">🔊 ON</button>
-                    <button id="soundOff" class="sound-btn sound-off">🔇 OFF</button>
-                </div>
-            </div>
-
-            <!-- Log Console -->
-            <div class="card log-card">
-                <div class="card-title">📋 LOG CONSOLE</div>
-                <div id="logConsole" class="log-console">
-                    <div class="log-entry">🟢 PO TRADING MATE initialized</div>
-                    <div class="log-entry">📡 Waiting for connection...</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab Content: SUPPORT -->
-        <div id="support" class="tab-content">
-            <div class="card">
-                <div class="card-title">📚 DOCUMENTATION & SUPPORT</div>
-                <div class="support-content">
-                    <h3>🎯 Strategy Overview</h3>
-                    <p><strong>Trend Following (1m, 2m, 3m):</strong> Follows established trend with Alligator alignment, EMA slope confirmation, and Stochastic in 20-40/60-80 zones.</p>
-                    <p><strong>Reversal (5m):</strong> Counter-trend trading at support/resistance with Alligator contraction, Stochastic oversold/overbought, and fractal confirmation.</p>
-                    
-                    <h3>⚙️ Martingale System</h3>
-                    <p>When enabled, after a loss the bot will place a new trade at <strong>2.3x</strong> the previous amount, continuing until a win is achieved (unlimited steps).</p>
-                    
-                    <h3>⏱️ Signal Timing</h3>
-                    <p>Signals are generated <strong>30 seconds before each candle closes</strong>, giving you time to execute manual trades or allowing auto-trading to trigger.</p>
-                    
-                    <h3>🔒 Risk Warning</h3>
-                    <p>Trading binary options involves substantial risk. Never trade more than you can afford to lose. Past performance does not guarantee future results.</p>
-                    
-                    <h3>📞 Support</h3>
-                    <p>For issues or questions, contact support at: <strong>support@potradingmate.com</strong></p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab Content: ACCOUNT -->
-        <div id="account" class="tab-content">
-            <div class="card">
-                <div class="card-title">👤 ACCOUNT SETTINGS</div>
-                <div class="account-form">
-                    <div class="form-group">
-                        <label>📧 POCKET OPTION EMAIL</label>
-                        <input type="email" id="email" placeholder="Enter your email" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label>🔑 POCKET OPTION PASSWORD</label>
-                        <input type="password" id="password" placeholder="Enter your password" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label>🏦 ACCOUNT TYPE</label>
-                        <select id="accountType" class="form-select">
-                            <option value="demo" selected>💰 DEMO ACCOUNT</option>
-                            <option value="real">💸 REAL ACCOUNT</option>
-                        </select>
-                    </div>
-                    <div class="form-buttons">
-                        <button id="connectBtn" class="btn-connect">🔌 CONNECT</button>
-                        <button id="disconnectBtn" class="btn-disconnect">🔌 DISCONNECT</button>
-                    </div>
-                    <div class="payout-filter">
-                        <span class="filter-label">🎯 MINIMUM PAYOUT FILTER:</span>
-                        <span class="filter-value">85%</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Bottom Navigation Menu -->
-        <div class="bottom-nav">
-            <div class="nav-item" data-tab="platform">📊 PLATFORM</div>
-            <div class="nav-item" data-tab="robot">🤖 ROBOT</div>
-            <div class="nav-item" data-tab="support">📚 SUPPORT</div>
-            <div class="nav-item" data-tab="account">👤 ACCOUNT</div>
+    <!-- Platform Page -->
+    <div id="page-platform" class="page active">
+        <div class="card">
+            <div class="card-title">📈 POCKET OPTION</div>
+            <p class="mb-10">View market performance and trade manually</p>
+            <div class="text-center"><a href="https://pocketoption.com" target="_blank" style="background:#1a2a6a;color:white;padding:10px 20px;text-decoration:none;border-radius:30px">🔗 OPEN PLATFORM</a></div>
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <!-- Robot Page -->
+    <div id="page-robot" class="page">
+        <div class="card">
+            <div class="card-title">🎮 TRADING CONTROLS</div>
+            <div class="row"><label>💰 AMOUNT:</label><select id="amount"><option value="5">$5</option><option value="10" selected>$10</option><option value="25">$25</option><option value="50">$50</option><option value="100">$100</option></select></div>
+            <div class="row"><label>⏱️ TIMEFRAME:</label><select id="timeframe"><option value="1m">1 Min (Trend)</option><option value="2m">2 Min (Trend)</option><option value="3m">3 Min (Trend)</option><option value="5m" selected>5 Min (Reversal)</option></select></div>
+            <div class="row"><label>📊 ASSET:</label><select id="asset"><option>Connect to load</option></select></div>
+            <div class="flex"><span style="font-weight:bold">QUICK:</span><button class="preset" data-amount="5">$5</button><button class="preset" data-amount="10">$10</button><button class="preset" data-amount="25">$25</button><button class="preset" data-amount="50">$50</button><button class="preset" data-amount="100">$100</button></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">♻️ MARTINGALE</div>
+            <div class="flex"><span>MODE:</span><button id="mgOn" class="toggle-btn toggle-off" onclick="setMartingale(true)">ON</button><button id="mgOff" class="toggle-btn toggle-on" onclick="setMartingale(false)">OFF</button><span>2.3x | Unlimited</span></div>
+        </div>
+
+        <div class="flex"><button id="startBtn" class="btn-start" onclick="startBot()">▶ START</button><button id="stopBtn" class="btn-stop" onclick="stopBot()">⏹ STOP</button></div>
+
+        <div class="card">
+            <div class="card-title">🔔 SIGNAL</div>
+            <div id="signalBox" class="signal signal-hold"><strong>⚪ WAITING ⚪</strong></div>
+            <div style="background:#e0e0e0;border-radius:10px;height:20px;margin-top:10px"><div id="confidenceFill" style="background:#28a745;height:100%;border-radius:10px;width:0%"></div></div>
+            <div class="text-center mt-10">Confidence: <strong id="confidenceVal">0</strong>%</div>
+        </div>
+
+        <div class="flex"><button id="manualCall" class="btn-call" onclick="manualTrade('CALL')">📈 CALL</button><button id="manualPut" class="btn-put" onclick="manualTrade('PUT')">📉 PUT</button></div>
+
+        <div class="card">
+            <div class="card-title">✅ RULES</div>
+            <ul id="rulesList" style="padding-left:20px"><li>Not connected</li></ul>
+        </div>
+
+        <div class="card">
+            <div class="card-title">📊 STATS</div>
+            <div class="flex"><div><strong>STATUS</strong><br><span id="botStatus">STOPPED</span></div><div><strong>TRADES</strong><br><span id="tradeCount">0</span></div><div><strong>P/L</strong><br><span id="netProfit">$0</span></div></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">📋 LOG</div>
+            <div id="logConsole" class="log">🟢 Ready<br>📡 Connect to Pocket Option</div>
+        </div>
+    </div>
+
+    <!-- Support Page -->
+    <div id="page-support" class="page">
+        <div class="card">
+            <div class="card-title">📚 STRATEGY</div>
+            <p><strong>Trend (1-3m):</strong> EMA-150 + Alligator + Stochastic</p>
+            <p><strong>Reversal (5m):</strong> Overshoot + Contraction + Fractals</p>
+            <p><strong>Martingale:</strong> 2.3x after loss, unlimited steps</p>
+            <p><strong>Signals:</strong> 30 seconds before candle close</p>
+        </div>
+    </div>
+
+    <!-- Account Page -->
+    <div id="page-account" class="page">
+        <div class="card">
+            <div class="card-title">👤 CONNECT</div>
+            <div class="form-group"><label>📧 EMAIL</label><input type="email" id="email" placeholder="Your Pocket Option email"></div>
+            <div class="form-group"><label>🔑 PASSWORD</label><input type="password" id="password" placeholder="Your password"></div>
+            <div class="form-group"><label>🏦 TYPE</label><select id="accountType"><option value="demo">DEMO</option><option value="real">REAL</option></select></div>
+            <div class="flex"><button id="connectBtn" class="btn-connect" onclick="connectAPI()">🔌 CONNECT</button><button class="btn-connect" style="background:#6c757d" onclick="disconnectAPI()">🔌 DISCONNECT</button></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+function showPage(name){
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+    document.getElementById('page-'+name).classList.add('active');
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    event.target.classList.add('active');
+}
+function addLog(msg){
+    let logDiv=document.getElementById('logConsole');
+    let time=new Date().toLocaleTimeString();
+    let newLog=document.createElement('div');
+    newLog.innerHTML=`[${time}] ${msg}`;
+    logDiv.insertBefore(newLog,logDiv.firstChild);
+    while(logDiv.children.length>15) logDiv.removeChild(logDiv.lastChild);
+}
+function setMartingale(on){
+    let onBtn=document.getElementById('mgOn'), offBtn=document.getElementById('mgOff');
+    if(on){
+        onBtn.classList.add('toggle-on'); onBtn.classList.remove('toggle-off');
+        offBtn.classList.add('toggle-off'); offBtn.classList.remove('toggle-on');
+        addLog('Martingale ON');
+    }else{
+        offBtn.classList.add('toggle-on'); offBtn.classList.remove('toggle-off');
+        onBtn.classList.add('toggle-off'); onBtn.classList.remove('toggle-on');
+        addLog('Martingale OFF');
+    }
+}
+async function connectAPI(){
+    let email=document.getElementById('email').value;
+    let pass=document.getElementById('password').value;
+    let type=document.getElementById('accountType').value;
+    if(!email||!pass){alert('Enter email/password');return;}
+    addLog('Connecting...');
+    try{
+        let res=await fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pass,account_type:type})});
+        let data=await res.json();
+        if(data.success){
+            addLog('Connected! Balance: $'+data.balance);
+            document.getElementById('status').innerHTML='🟢 Connected | $'+data.balance;
+            await loadAssetsAPI();
+        }else{addLog('Failed: '+data.error);}
+    }catch(e){addLog('Error: '+e.message);}
+}
+async function disconnectAPI(){
+    await fetch('/api/disconnect',{method:'POST'});
+    addLog('Disconnected');
+    document.getElementById('status').innerHTML='🔴 Disconnected';
+}
+async function loadAssetsAPI(){
+    try{
+        let res=await fetch('/api/assets');
+        let assets=await res.json();
+        let sel=document.getElementById('asset');
+        sel.innerHTML='';
+        assets.forEach(a=>{let opt=document.createElement('option');opt.value=a.symbol;opt.textContent=`${a.name} - ${a.payout}%`;sel.appendChild(opt);});
+        addLog('Loaded '+assets.length+' assets');
+    }catch(e){addLog('Assets error: '+e.message);}
+}
+async function startBot(){
+    let asset=document.getElementById('asset').value;
+    let amount=parseFloat(document.getElementById('amount').value);
+    let tf=document.getElementById('timeframe').value;
+    let mg=document.getElementById('mgOn').classList.contains('toggle-on');
+    addLog(`Start bot: ${asset} $${amount} ${tf}`);
+    document.getElementById('botStatus').innerHTML='RUNNING';
+    await fetch('/api/start_bot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset,amount,timeframe:tf,martingale:mg})});
+}
+async function stopBot(){
+    addLog('Stop bot');
+    document.getElementById('botStatus').innerHTML='STOPPED';
+    await fetch('/api/stop_bot',{method:'POST'});
+}
+async function manualTrade(dir){
+    let asset=document.getElementById('asset').value;
+    let amount=parseFloat(document.getElementById('amount').value);
+    addLog(`Manual ${dir} $${amount}`);
+    let res=await fetch('/api/manual_trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset,amount,direction:dir})});
+    let data=await res.json();
+    if(data.success) addLog(`${dir} executed`);
+    else addLog(`Failed: ${data.error}`);
+}
+document.querySelectorAll('.preset').forEach(btn=>btn.addEventListener('click',function(){document.getElementById('amount').value=this.dataset.amount;addLog(`Amount $${this.dataset.amount}`);}));
+
+const socket=io();
+socket.on('connect',()=>addLog('WebSocket connected'));
+socket.on('signal',(s)=>{
+    let box=document.getElementById('signalBox');
+    if(s.direction=='CALL'){box.className='signal signal-call';box.innerHTML='<strong>🟢 CALL SIGNAL 🟢</strong><br>Price: $'+s.price+'<br>Confidence: '+s.confidence+'%';}
+    else if(s.direction=='PUT'){box.className='signal signal-put';box.innerHTML='<strong>🔴 PUT SIGNAL 🔴</strong><br>Price: $'+s.price+'<br>Confidence: '+s.confidence+'%';}
+    else{box.className='signal signal-hold';box.innerHTML='<strong>⚪ HOLD ⚪</strong>';}
+    document.getElementById('confidenceFill').style.width=s.confidence+'%';
+    document.getElementById('confidenceVal').innerText=s.confidence;
+    if(s.rules_passed) document.getElementById('rulesList').innerHTML=s.rules_passed.map(r=>`<li>${r}</li>`).join('');
+    addLog(`Signal: ${s.direction} ${s.confidence}%`);
+});
+socket.on('trade_result',(r)=>{if(r.is_win)addLog(`✅ WIN +$${r.profit}`);else addLog(`❌ LOSS -$${r.amount}`);});
+socket.on('log',(d)=>addLog(d.message));
+addLog('Ready! Go to ACCOUNT tab to connect');
+</script>
 </body>
-  </html>
+    </html>
