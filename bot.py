@@ -496,13 +496,12 @@ if __name__ == '__main__':
         print(f"📍 Debug: False")
         print("=" * 60)
         
-        # Run the app with SocketIO
+        # Run the app with SocketIO - allow_unsafe_werkzeug removed for compatibility
         socketio.run(
             app,
             host='0.0.0.0',
             port=port,
-            debug=False,
-            allow_unsafe_werkzeug=True  # Required for production
+            debug=False
         )
         
     except Exception as e:
