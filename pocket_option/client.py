@@ -146,8 +146,9 @@ class PocketOptionClient:
             }
             
             print(f"🔐 Attempting login for {self.email}...")
+            # FIXED: Changed from /api/v1/login to /login
             response = session.post(
-                f"{self.BASE_URL}/api/v1/login",
+                f"{self.BASE_URL}/login",
                 json=login_data,
                 headers={"Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest"},
                 timeout=30
