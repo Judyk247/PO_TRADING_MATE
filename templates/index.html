@@ -38,7 +38,7 @@
         .log{background:#1a1a2e;color:#0f0;font-family:monospace;font-size:10px;padding:10px;border-radius:10px;height:120px;overflow-y:auto}
         .flex{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}
         .form-group{margin-bottom:15px}
-        .form-group input,.form-group select{width:100%;padding:10px}
+        .form-group select{width:100%;padding:10px}
         .mb-10{margin-bottom:10px}
         .text-center{text-align:center}
         button{cursor:pointer}
@@ -107,7 +107,7 @@
 
         <div class="card">
             <div class="card-title">📋 LOG</div>
-            <div id="logConsole" class="log">🟢 Ready<br>📡 Connect to Pocket Option</div>
+            <div id="logConsole" class="log">🟢 Ready<br>📡 Click CONNECT in ACCOUNT tab</div>
         </div>
     </div>
 
@@ -123,20 +123,28 @@
         </div>
     </div>
 
-    <!-- Account Page -->
+    <!-- Account Page - Simplified - No Email/Password Required -->
     <div id="page-account" class="page">
         <div class="card">
             <div class="card-title">👤 CONNECT TO POCKET OPTION</div>
-            <div class="form-group"><label>📧 EMAIL</label><input type="email" id="email" placeholder="Your Pocket Option email"></div>
-            <div class="form-group"><label>🔑 PASSWORD</label><input type="password" id="password" placeholder="Your password"></div>
-            <div class="form-group"><label>🏦 ACCOUNT TYPE</label><select id="accountType"><option value="demo">💰 DEMO ACCOUNT</option><option value="real">💸 REAL ACCOUNT</option></select></div>
+            <div class="form-group">
+                <label>🏦 ACCOUNT TYPE</label>
+                <select id="accountType">
+                    <option value="demo">💰 DEMO ACCOUNT</option>
+                    <option value="real">💸 REAL ACCOUNT</option>
+                </select>
+            </div>
             <div class="flex">
-                <button class="btn-connect" onclick="connectToPocketOption()">🔌 CONNECT</button>
-                <button class="btn-disconnect" onclick="disconnectFromPocketOption()">🔌 DISCONNECT</button>
+                <button id="connectBtn" class="btn-connect" onclick="connectToPocket()">🔌 CONNECT</button>
+                <button id="disconnectBtn" class="btn-disconnect" onclick="disconnectFromPocket()">🔌 DISCONNECT</button>
             </div>
             <div class="form-group" style="margin-top:15px">
                 <label>🎯 MIN PAYOUT:</label>
                 <span style="font-weight:bold;color:#1a2a6a">85%</span>
+            </div>
+            <div class="form-group" style="margin-top:15px">
+                <label>ℹ️ INFO:</label>
+                <span style="font-size:12px;color:#666">SSID is loaded from environment variable. No login required.</span>
             </div>
         </div>
     </div>
@@ -149,16 +157,7 @@ function showPage(name){
     document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
     document.getElementById('page-'+name).classList.add('active');
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-    // Find the clicked tab and mark active
-    for(let t of document.querySelectorAll('.tab')){
-        if(t.textContent.includes(name.toUpperCase()) || 
-           (name==='platform' && t.textContent.includes('PLATFORM')) ||
-           (name==='robot' && t.textContent.includes('ROBOT')) ||
-           (name==='support' && t.textContent.includes('SUPPORT')) ||
-           (name==='account' && t.textContent.includes('ACCOUNT'))){
-            t.classList.add('active');
-        }
-    }
+    event.target.classList.add('active');
 }
 
 // Add log message
@@ -185,25 +184,18 @@ function setMartingale(on){
     }
 }
 
-// Connect to Pocket Option
-async function connectToPocketOption(){
-    let email=document.getElementById('email').value;
-    let pass=document.getElementById('password').value;
-    let type=document.getElementById('accountType').value;
-    
-    if(!email||!pass){
-        alert('Please enter email and password');
-        return;
-    }
-    
+// Connect to Pocket Option - NO EMAIL/PASSWORD REQUIRED
+async function connectToPocket(){
     addLog('🔐 Connecting to Pocket Option...');
     document.getElementById('status').innerHTML='🟡 Connecting...';
+    
+    let accountType = document.getElementById('accountType').value;
     
     try{
         let res=await fetch('/api/connect',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({email:email,password:pass,account_type:type})
+            body:JSON.stringify({ account_type: accountType })
         });
         let data=await res.json();
         
@@ -223,8 +215,8 @@ async function connectToPocketOption(){
     }
 }
 
-// Disconnect from Pocket Option
-async function disconnectFromPocketOption(){
+// Disconnect
+async function disconnectFromPocket(){
     try{
         await fetch('/api/disconnect',{method:'POST'});
         addLog('🔌 Disconnected');
@@ -240,7 +232,7 @@ async function loadAssets(){
         let res=await fetch('/api/assets');
         let assets=await res.json();
         let sel=document.getElementById('asset');
-        if(sel){
+        if(sel && assets.length>0){
             sel.innerHTML='';
             assets.forEach(a=>{
                 let opt=document.createElement('option');
@@ -320,7 +312,7 @@ document.querySelectorAll('.preset').forEach(btn=>{
     });
 });
 
-// Socket.IO for real-time updates
+// Socket.IO
 const socket=io();
 
 socket.on('connect',function(){
@@ -373,7 +365,7 @@ socket.on('log',function(data){
 
 // Initialize
 addLog('🚀 PO TRADING MATE initialized');
-addLog('📡 Go to ACCOUNT tab and click CONNECT');
+addLog('📡 Click CONNECT in ACCOUNT tab to connect to Pocket Option');
 </script>
 </body>
-    </html>
+                                         </html>
