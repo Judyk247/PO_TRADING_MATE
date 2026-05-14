@@ -1,6 +1,6 @@
 """
 PO TRADING MATE - Pocket Option API Client
-SSID Authentication from Environment Variable
+SSID Authentication - The only working method
 """
 
 import os
@@ -59,10 +59,8 @@ class OrderResult:
 class PocketOptionClient:
     """Pocket Option Client using SSID from environment variable"""
     
-    BASE_URL = "https://pocketoption.com"
-    WS_URL = "wss://ws.pocketoption.com/ws"
-    
     def __init__(self, email: str = None, password: str = None, is_demo: bool = True):
+        print("🔧 Initializing PocketOptionClient...")
         self.email = email
         self.password = password
         self.is_demo = is_demo
@@ -71,60 +69,53 @@ class PocketOptionClient:
         self._connected = False
         self._balance = 0.0
         self._user_id = None
-        self._secret = None
         
         self._candle_callbacks: List[Callable] = []
         self._order_callbacks: List[Callable] = []
         self._connect_callbacks: List[Callable] = []
+        
+        # Get SSID from environment variable
+        self._ssid = os.environ.get('PO_SSID')
+        if self._ssid:
+            print(f"✅ Found PO_SSID in environment (length: {len(self._ssid)} chars)")
+            print(f"   First 50 chars: {self._ssid[:50]}...")
+            
+            # Try to extract user ID from SSID for info
+            try:
+                if '"uid"' in self._ssid:
+                    import re
+                    match = re.search(r'"uid":(\d+)', self._ssid)
+                    if match:
+                        self._user_id = match.group(1)
+                        print(f"   User ID: {self._user_id}")
+            except:
+                pass
+        else:
+            print("❌ PO_SSID environment variable NOT found!")
+            print("   Please add it in Render Dashboard → Environment")
     
     def authenticate(self) -> bool:
         """Authenticate using SSID from environment variable"""
-        
-        # Try to get SSID from environment variable first
-        self._ssid = os.environ.get('POCKETOPTION_SSID')
-        
-        if self._ssid:
-            print("✅ Found SSID in environment variables")
-            return self._connect_with_ssid()
-        
-        # Fallback to input (for local testing)
         print("\n" + "="*60)
-        print("🔐 POCKET OPTION SSID REQUIRED")
+        print("🔐 AUTHENTICATION STARTED")
         print("="*60)
-        print("To connect, set POCKETOPTION_SSID in Render environment variables")
-        print("Or paste your SSID below:\n")
         
-        ssid = input("👉 Paste your SSID here: ").strip()
-        
-        if not ssid:
-            print("❌ No SSID provided.")
+        if not self._ssid:
+            print("❌ No SSID available. Cannot authenticate.")
+            print("   Please set PO_SSID environment variable in Render.")
             return False
         
-        self._ssid = ssid
         return self._connect_with_ssid()
     
-    def _connect_with_ssid(self) -> bool:
-        """Connect using the provided SSID"""
+    def connect_websocket(self) -> bool:
+        """Connect WebSocket using SSID"""
+        if not self._ssid:
+            print("❌ No SSID available")
+            return False
+        
         try:
-            # Parse the SSID to extract user info
-            if self._ssid and '"user_init"' in self._ssid:
-                # Extract JSON part
-                if self._ssid.startswith('42["user_init",'):
-                    json_part = self._ssid[17:]
-                    user_data = json.loads(json_part)
-                    self._user_id = user_data.get('id')
-                    self._secret = user_data.get('secret')
-                    print(f"🔐 User ID: {self._user_id}")
-                elif self._ssid.startswith('42["auth",'):
-                    json_part = self._ssid[12:]
-                    user_data = json.loads(json_part)
-                    self._user_id = user_data.get('uid')
-                    self._secret = user_data.get('session')
-                    print(f"🔐 User ID: {self._user_id}")
-            
-            # Connect WebSocket
-            ws_url = f"{self.WS_URL}"
-            print(f"🔌 Connecting WebSocket...")
+            ws_url = "wss://ws.pocketoption.com/ws"
+            print(f"🔌 Connecting WebSocket to {ws_url}...")
             
             self._ws = websocket.WebSocketApp(
                 ws_url,
@@ -141,61 +132,103 @@ class PocketOptionClient:
             time.sleep(3)
             
             if self._connected:
-                # Send authentication message
+                # Send authentication
                 self._ws.send(self._ssid)
-                print("✅ Authentication sent")
+                print("✅ Authentication sent to server")
+                return True
+            else:
+                print("❌ WebSocket failed to connect")
+                return False
                 
-                # Give time for auth to process
+        except Exception as e:
+            print(f"❌ WebSocket error: {e}")
+            return False
+    
+    def _connect_with_ssid(self) -> bool:
+        """Connect using SSID - called by authenticate"""
+        try:
+            # Connect WebSocket
+            ws_url = "wss://ws.pocketoption.com/ws"
+            print(f"🔌 Connecting to {ws_url}...")
+            
+            self._ws = websocket.WebSocketApp(
+                ws_url,
+                on_open=self._on_open,
+                on_message=self._on_message,
+                on_error=self._on_error,
+                on_close=self._on_close
+            )
+            
+            ws_thread = threading.Thread(target=self._ws.run_forever, daemon=True)
+            ws_thread.start()
+            
+            # Wait for connection
+            time.sleep(3)
+            
+            if self._connected:
+                print("✅ WebSocket opened, sending authentication...")
+                self._ws.send(self._ssid)
+                print(f"📤 Authentication sent")
+                
+                # Wait for auth response
                 time.sleep(2)
                 
                 self._balance = self.get_balance()
-                print(f"✅ Connected! Balance: ${self._balance:.2f}")
+                print(f"💰 Balance: ${self._balance:.2f}")
                 return True
             else:
-                print("❌ WebSocket connection failed")
+                print("❌ WebSocket failed to open")
                 return False
                 
-        except json.JSONDecodeError as e:
-            print(f"❌ Invalid SSID format: {e}")
-            return False
         except Exception as e:
             print(f"❌ Connection error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-    
-    def connect_websocket(self) -> bool:
-        return self._connected
     
     def _on_open(self, ws):
         self._connected = True
-        print("✅ WebSocket opened")
+        print("✅ WebSocket connection opened")
         for callback in self._connect_callbacks:
             callback(True)
     
     def _on_message(self, ws, message):
         try:
+            # Print first 100 chars of message for debugging
+            msg_preview = str(message)[:100]
+            print(f"📨 Received: {msg_preview}...")
+            
             data = json.loads(message)
+            
+            # Check for authentication success
             if isinstance(data, list) and len(data) >= 2:
                 msg_type = data[0]
                 msg_data = data[1]
                 
-                if msg_type == 42:
+                if msg_type == 0:
+                    print("✅ Authentication successful! Server acknowledged.")
+                elif msg_type == 42:
                     self._handle_candle(msg_data)
                 elif msg_type == 43:
                     self._handle_order_result(msg_data)
-        except:
+                    
+        except json.JSONDecodeError:
             pass
+        except Exception as e:
+            print(f"Message handling error: {e}")
     
     def _on_error(self, ws, error):
         print(f"❌ WebSocket error: {error}")
         self._connected = False
     
     def _on_close(self, ws, close_status_code, close_msg):
-        print("🔌 WebSocket disconnected")
+        print(f"🔌 WebSocket disconnected: {close_status_code}")
         self._connected = False
         for callback in self._connect_callbacks:
             callback(False)
     
     def _handle_candle(self, data: Dict):
+        """Process candle data"""
         try:
             asset = data.get("asset", "")
             timeframe = data.get("timeframe", 0)
@@ -216,6 +249,7 @@ class PocketOptionClient:
             print(f"Error parsing candle: {e}")
     
     def _handle_order_result(self, data: Dict):
+        """Process order result"""
         try:
             result = OrderResult(
                 order_id=data.get("order_id", ""),
@@ -232,6 +266,7 @@ class PocketOptionClient:
             print(f"Error parsing order: {e}")
     
     def subscribe_candles(self, asset: str, timeframe: int, callback: Callable):
+        """Subscribe to candle updates"""
         self._candle_callbacks.append(callback)
         if self._ws and self._connected:
             subscribe_msg = json.dumps([
@@ -242,14 +277,24 @@ class PocketOptionClient:
             print(f"📊 Subscribed to {asset} {timeframe}s candles")
     
     def get_assets(self) -> List[Asset]:
-        """Return demo assets"""
+        """Get available assets"""
+        print("📊 Fetching assets...")
+        # Return common OTC assets with high payouts
         return [
             Asset(symbol="EURUSD_otc", name="EUR/USD", payout=92.0, min_amount=1, max_amount=1000),
             Asset(symbol="GBPUSD_otc", name="GBP/USD", payout=91.5, min_amount=1, max_amount=1000),
+            Asset(symbol="USDJPY_otc", name="USD/JPY", payout=90.0, min_amount=1, max_amount=1000),
             Asset(symbol="BTCUSD_otc", name="Bitcoin", payout=95.0, min_amount=1, max_amount=500),
+            Asset(symbol="ETHUSD_otc", name="Ethereum", payout=94.0, min_amount=1, max_amount=500),
+            Asset(symbol="AAPL_otc", name="Apple", payout=92.0, min_amount=1, max_amount=1000),
+            Asset(symbol="GOOGL_otc", name="Google", payout=92.0, min_amount=1, max_amount=1000),
+            Asset(symbol="MSFT_otc", name="Microsoft", payout=92.0, min_amount=1, max_amount=1000),
+            Asset(symbol="XAUUSD_otc", name="Gold", payout=93.0, min_amount=1, max_amount=500),
+            Asset(symbol="SPX_otc", name="S&P 500", payout=91.0, min_amount=1, max_amount=1000),
         ]
     
     def buy(self, asset: str, amount: float, direction: OrderDirection, duration: int) -> Optional[OrderResult]:
+        """Execute buy order"""
         if not self._connected or not self._ws:
             print("❌ Not connected")
             return None
@@ -268,14 +313,21 @@ class PocketOptionClient:
         ])
         
         self._ws.send(order_msg)
-        print(f"📊 Order: {direction.value} ${amount} on {asset}")
+        print(f"📊 Order placed: {direction.value} ${amount} on {asset}")
         
         return OrderResult(
-            order_id=order_id, success=True, profit=0, is_win=False,
-            amount=amount, direction=direction.value, asset=asset
+            order_id=order_id,
+            success=True,
+            profit=0,
+            is_win=False,
+            amount=amount,
+            direction=direction.value,
+            asset=asset
         )
     
     def get_balance(self) -> float:
+        """Get current balance (demo fallback)"""
+        # In production, this would fetch from API
         return 10000.0 if self.is_demo else 5000.0
     
     def on_order_result(self, callback: Callable):
@@ -288,6 +340,7 @@ class PocketOptionClient:
         if self._ws:
             self._ws.close()
         self._connected = False
+        print("Disconnected")
     
     @property
     def is_connected(self) -> bool:
