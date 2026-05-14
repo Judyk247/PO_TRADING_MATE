@@ -100,7 +100,7 @@ trade_stats = {
 }
 active_subscriptions = []
 
-# Load credentials from environment variables (optional)
+# Load credentials from environment variables (optional - not used for SSID)
 DEFAULT_EMAIL = os.environ.get('POCKET_OPTION_EMAIL', '')
 DEFAULT_PASSWORD = os.environ.get('POCKET_OPTION_PASSWORD', '')
 DEFAULT_DEMO = os.environ.get('POCKET_OPTION_DEMO', 'true').lower() == 'true'
@@ -120,44 +120,43 @@ def index():
 
 @app.route('/api/connect', methods=['POST'])
 def connect():
-    """Connect to Pocket Option"""
+    """Connect to Pocket Option using SSID from environment variable"""
     global client
     
-    data = request.json
-    email = data.get('email')
-    password = data.get('password')
-    account_type = data.get('account_type', 'demo')
-    is_demo = account_type == 'demo'
-    
-    if (not email or not password) and DEFAULT_EMAIL and DEFAULT_PASSWORD:
-        email = DEFAULT_EMAIL
-        password = DEFAULT_PASSWORD
-        is_demo = DEFAULT_DEMO
-    
-    if not email or not password:
-        return jsonify({'success': False, 'error': 'Email and password required'})
+    print("🔵 CONNECT endpoint called")
     
     try:
-        print(f"🔐 Attempting to connect with email: {email}")
-        client = PocketOptionClient(email=email, password=password, is_demo=is_demo)
+        data = request.json
+        account_type = data.get('account_type', 'demo')
+        is_demo = account_type == 'demo'
         
+        print(f"📡 Account type: {'DEMO' if is_demo else 'REAL'}")
+        
+        # Create client (SSID will be read from environment variable inside the client)
+        client = PocketOptionClient(email=None, password=None, is_demo=is_demo)
+        
+        # Authenticate using SSID from environment
         if client.authenticate():
-            print("✅ Authentication successful")
+            balance = client.get_balance()
+            print(f"✅ Connection successful! Balance: ${balance:.2f}")
+            
+            # Connect WebSocket
             if client.connect_websocket():
-                print("✅ WebSocket connected")
-                balance = client.get_balance()
-                socketio.emit('log', {'message': f'Connected to Pocket Option', 'type': 'success'})
-                return jsonify({'success': True, 'balance': balance})
+                print("✅ WebSocket connected successfully")
             else:
-                print("❌ WebSocket connection failed")
-                return jsonify({'success': False, 'error': 'WebSocket connection failed'})
+                print("⚠️ WebSocket connection issue, but API is connected")
+            
+            socketio.emit('log', {'message': f'Connected to Pocket Option! Balance: ${balance:.2f}', 'type': 'success'})
+            return jsonify({'success': True, 'balance': balance})
         else:
             print("❌ Authentication failed")
-            return jsonify({'success': False, 'error': 'Authentication failed'})
+            socketio.emit('log', {'message': 'Authentication failed. Check PO_SSID environment variable.', 'type': 'error'})
+            return jsonify({'success': False, 'error': 'Authentication failed. Check your PO_SSID environment variable.'})
             
     except Exception as e:
-        logger.error(f"Connection error: {e}")
+        print(f"❌ Connection error: {e}")
         traceback.print_exc()
+        socketio.emit('log', {'message': f'Connection error: {str(e)}', 'type': 'error'})
         return jsonify({'success': False, 'error': str(e)})
 
 
@@ -166,6 +165,7 @@ def disconnect():
     """Disconnect from Pocket Option"""
     global client, bot_running
     
+    print("🔵 DISCONNECT endpoint called")
     bot_running = False
     
     if client:
@@ -179,11 +179,14 @@ def disconnect():
 @app.route('/api/assets')
 def get_assets():
     """Get available assets with 85%+ payout"""
+    print("🔵 ASSETS endpoint called")
+    
     if not client:
+        print("⚠️ No client connected")
         return jsonify([])
     
     assets = client.get_assets()
-    return jsonify([
+    result = [
         {
             'symbol': a.symbol,
             'name': a.name,
@@ -192,7 +195,9 @@ def get_assets():
             'max_amount': a.max_amount
         }
         for a in assets
-    ])
+    ]
+    print(f"📊 Returning {len(result)} assets")
+    return jsonify(result)
 
 
 @app.route('/api/start_bot', methods=['POST'])
@@ -201,13 +206,18 @@ def start_bot():
     global bot_running, bot_thread, current_asset, current_amount, current_timeframe
     global current_strategy, martingale_enabled
     
+    print("🔵 START_BOT endpoint called")
+    
     data = request.json
     current_asset = data.get('asset', 'EURUSD_otc')
     current_amount = float(data.get('amount', 10))
     current_timeframe = data.get('timeframe', '5m')
     martingale_enabled = data.get('martingale', False)
     
+    print(f"📡 Bot config - Asset: {current_asset}, Amount: ${current_amount}, Timeframe: {current_timeframe}, Martingale: {martingale_enabled}")
+    
     if not client or not client.is_connected:
+        print("❌ Not connected to Pocket Option")
         return jsonify({'success': False, 'error': 'Not connected to Pocket Option'})
     
     bot_running = True
@@ -235,6 +245,7 @@ def start_bot():
 def stop_bot():
     """Stop auto-trading bot"""
     global bot_running
+    print("🔵 STOP_BOT endpoint called")
     bot_running = False
     socketio.emit('log', {'message': 'Bot stopped', 'type': 'warning'})
     return jsonify({'success': True})
@@ -243,6 +254,8 @@ def stop_bot():
 @app.route('/api/manual_trade', methods=['POST'])
 def manual_trade():
     """Execute manual trade"""
+    print("🔵 MANUAL_TRADE endpoint called")
+    
     if not client or not client.is_connected:
         return jsonify({'success': False, 'error': 'Not connected'})
     
@@ -251,12 +264,15 @@ def manual_trade():
     amount = float(data.get('amount', 10))
     direction = data.get('direction')
     
+    print(f"📡 Manual trade - Asset: {asset}, Amount: ${amount}, Direction: {direction}")
+    
     order_direction = OrderDirection.CALL if direction == 'CALL' else OrderDirection.PUT
     duration = _get_duration_from_timeframe(current_timeframe)
     
     result = client.buy(asset, amount, order_direction, duration)
     
     if result:
+        socketio.emit('log', {'message': f'Manual {direction} trade placed: ${amount} on {asset}', 'type': 'info'})
         return jsonify({'success': True, 'order_id': result.order_id})
     else:
         return jsonify({'success': False, 'error': 'Trade failed'})
@@ -317,6 +333,7 @@ def _bot_loop():
     """Main bot loop - runs in background thread"""
     global martingale_state, trade_stats
     
+    print("🔄 Bot loop started")
     timeframe_seconds = _get_candle_interval(current_timeframe)
     candle_data = []
     
@@ -440,6 +457,7 @@ def _bot_loop():
     while bot_running:
         time.sleep(0.1)
     
+    print("🔄 Bot loop ended")
     socketio.emit('log', {'message': 'Bot loop ended', 'type': 'info'})
 
 
@@ -475,7 +493,14 @@ def _execute_trade(direction: str, price: float = None, martingale: bool = False
 @socketio.on('connect')
 def handle_connect():
     """Handle client WebSocket connection"""
+    print("🔌 Socket.IO client connected")
     emit('log', {'message': 'Connected to PO TRADING MATE server', 'type': 'success'})
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client WebSocket disconnection"""
+    print("🔌 Socket.IO client disconnected")
 
 
 # ============================================================
@@ -488,6 +513,16 @@ if __name__ == '__main__':
         print("🚀 PO TRADING MATE Starting...")
         print("=" * 60)
         
+        # Check for PO_SSID environment variable
+        ssid_check = os.environ.get('PO_SSID')
+        if ssid_check:
+            print(f"✅ PO_SSID found (length: {len(ssid_check)} chars)")
+            print(f"   First 50 chars: {ssid_check[:50]}...")
+        else:
+            print("❌ WARNING: PO_SSID environment variable is NOT set!")
+            print("   Please add it in Render Dashboard → Environment")
+            print("   Your bot will not connect to Pocket Option without it.")
+        
         # Get the port from environment variable (Render sets this automatically)
         port = int(os.environ.get('PORT', 10000))
         
@@ -496,7 +531,7 @@ if __name__ == '__main__':
         print(f"📍 Debug: False")
         print("=" * 60)
         
-        # Run the app with SocketIO - allow_unsafe_werkzeug removed for compatibility
+        # Run the app with SocketIO
         socketio.run(
             app,
             host='0.0.0.0',
