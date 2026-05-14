@@ -3,6 +3,5 @@ Flask-SocketIO==5.3.4
 python-socketio==5.9.0
 eventlet==0.33.3
 gunicorn==21.2.0
-websocket-client==1.6.1
-requests==2.31.0
+pocket-option==0.1.5
 python-dotenv==1.0.0
