@@ -100,11 +100,6 @@ trade_stats = {
 }
 active_subscriptions = []
 
-# Load credentials from environment variables (optional - not used for SSID)
-DEFAULT_EMAIL = os.environ.get('POCKET_OPTION_EMAIL', '')
-DEFAULT_PASSWORD = os.environ.get('POCKET_OPTION_PASSWORD', '')
-DEFAULT_DEMO = os.environ.get('POCKET_OPTION_DEMO', 'true').lower() == 'true'
-
 print("✅ Global variables initialized")
 
 # ============================================================
@@ -128,14 +123,31 @@ def connect():
     try:
         data = request.json
         account_type = data.get('account_type', 'demo')
-        is_demo = account_type == 'demo'
         
-        print(f"📡 Account type: {'DEMO' if is_demo else 'REAL'}")
+        print(f"📡 Account type: {account_type.upper()}")
         
-        # Create client (SSID will be read from environment variable inside the client)
-        client = PocketOptionClient(email=None, password=None, is_demo=is_demo)
+        # Get the appropriate SSID based on account type
+        if account_type == 'demo':
+            ssid = os.environ.get('PO_SSID_DEMO', '')
+            account_name = "DEMO"
+        else:
+            ssid = os.environ.get('PO_SSID_REAL', '')
+            account_name = "REAL"
         
-        # Authenticate using SSID from environment
+        if not ssid:
+            print(f"❌ No SSID found for {account_name} account")
+            return jsonify({'success': False, 'error': f'No SSID found for {account_name} account. Check environment variables.'})
+        
+        print(f"📡 SSID length: {len(ssid)} chars")
+        print(f"📡 SSID preview: {ssid[:80]}...")
+        
+        # Create client - NO is_demo parameter
+        client = PocketOptionClient()
+        
+        # Set the SSID
+        client.set_ssid(ssid)
+        
+        # Authenticate
         if client.authenticate():
             balance = client.get_balance()
             print(f"✅ Connection successful! Balance: ${balance:.2f}")
@@ -150,8 +162,8 @@ def connect():
             return jsonify({'success': True, 'balance': balance})
         else:
             print("❌ Authentication failed")
-            socketio.emit('log', {'message': 'Authentication failed. Check PO_SSID environment variable.', 'type': 'error'})
-            return jsonify({'success': False, 'error': 'Authentication failed. Check your PO_SSID environment variable.'})
+            socketio.emit('log', {'message': 'Authentication failed. Check your SSID environment variables.', 'type': 'error'})
+            return jsonify({'success': False, 'error': 'Authentication failed. Check your PO_SSID_DEMO/PO_SSID_REAL environment variables.'})
             
     except Exception as e:
         print(f"❌ Connection error: {e}")
@@ -287,17 +299,6 @@ def _get_duration_from_timeframe(timeframe: str) -> int:
         '5m': 300
     }
     return timeframe_map.get(timeframe, 60)
-
-
-def _get_expiry_from_timeframe(timeframe: str) -> int:
-    """Get expiry minutes for signal"""
-    expiry_map = {
-        '1m': 2,
-        '2m': 3,
-        '3m': 4,
-        '5m': 5
-    }
-    return expiry_map.get(timeframe, 2)
 
 
 def _get_candle_interval(timeframe: str) -> int:
@@ -513,15 +514,19 @@ if __name__ == '__main__':
         print("🚀 PO TRADING MATE Starting...")
         print("=" * 60)
         
-        # Check for PO_SSID environment variable
-        ssid_check = os.environ.get('PO_SSID')
-        if ssid_check:
-            print(f"✅ PO_SSID found (length: {len(ssid_check)} chars)")
-            print(f"   First 50 chars: {ssid_check[:50]}...")
+        # Check for environment variables
+        demo_ssid = os.environ.get('PO_SSID_DEMO', '')
+        real_ssid = os.environ.get('PO_SSID_REAL', '')
+        
+        if demo_ssid:
+            print(f"✅ PO_SSID_DEMO found (length: {len(demo_ssid)} chars)")
         else:
-            print("❌ WARNING: PO_SSID environment variable is NOT set!")
-            print("   Please add it in Render Dashboard → Environment")
-            print("   Your bot will not connect to Pocket Option without it.")
+            print("❌ WARNING: PO_SSID_DEMO environment variable is NOT set!")
+        
+        if real_ssid:
+            print(f"✅ PO_SSID_REAL found (length: {len(real_ssid)} chars)")
+        else:
+            print("❌ WARNING: PO_SSID_REAL environment variable is NOT set!")
         
         # Get the port from environment variable (Render sets this automatically)
         port = int(os.environ.get('PORT', 10000))
