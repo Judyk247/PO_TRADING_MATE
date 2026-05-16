@@ -3,9 +3,13 @@ FROM python:3.11.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including Chrome for Selenium
+# Install system dependencies including git and Chrome
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
+    make \
+    git \
+    libc6-dev \
     wget \
     gnupg \
     unzip \
@@ -49,7 +53,7 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install API-PocketOption from GitHub (auto-login with CAPTCHA handling)
+# Install API-PocketOption from GitHub (git is now installed)
 RUN pip install --no-cache-dir git+https://github.com/A11ksa/API-PocketOption.git
 
 # Copy the entire application
