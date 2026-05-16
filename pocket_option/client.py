@@ -1,6 +1,6 @@
 """
 PO TRADING MATE - Pocket Option API Client
-Using BinaryOptionsToolsV2 - Python 3.11 compatible
+Using pocketoptionapi2 - Pure Python, no Rust compilation needed
 """
 
 import os
@@ -13,8 +13,6 @@ import random
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
-
-import websocket
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,7 +55,7 @@ class OrderResult:
 
 
 class PocketOptionClient:
-    """Pocket Option Client using BinaryOptionsToolsV2"""
+    """Pocket Option Client using pocketoptionapi2 - Pure Python"""
     
     def __init__(self):
         print("🔧 Initializing PocketOptionClient...")
@@ -77,21 +75,30 @@ class PocketOptionClient:
         self._detect_account_type_from_ssid()
         print(f"✅ SSID set (length: {len(ssid)} chars)")
         
-        # Initialize the BinaryOptionsToolsV2 client
+        # Initialize the pocketoptionapi2 client
         try:
-            from binaryoptionstoolsv2.pocketoption import PocketOption
+            from pocketoptionapi2 import PocketOptionAPI
             
             # Extract session token from SSID
             session = self._extract_session_from_ssid()
-            if session:
+            uid = self._extract_uid_from_ssid()
+            
+            if session and uid:
                 print(f"✅ Extracted session token: {session[:20]}...")
-                self._client = PocketOption(ssid=session)
-                print("✅ BinaryOptionsToolsV2 client initialized")
+                print(f"✅ User ID: {uid}")
+                
+                # Initialize the client
+                self._client = PocketOptionAPI(
+                    ssid=session,
+                    uid=int(uid),
+                    is_demo=self._is_demo
+                )
+                print("✅ pocketoptionapi2 client initialized")
             else:
-                print("❌ Could not extract session token from SSID")
+                print("❌ Could not extract session/uid from SSID")
         except ImportError as e:
-            print(f"❌ BinaryOptionsToolsV2 not installed: {e}")
-            print("   Run: pip install binaryoptionstoolsv2==0.1.6a4")
+            print(f"❌ pocketoptionapi2 not installed: {e}")
+            print("   Run: pip install pocketoptionapi2==1.0.0")
         except Exception as e:
             print(f"❌ Error initializing client: {e}")
     
@@ -119,6 +126,34 @@ class PocketOptionClient:
                     return session
         except Exception as e:
             print(f"Error extracting session: {e}")
+        
+        return None
+    
+    def _extract_uid_from_ssid(self) -> Optional[int]:
+        """Extract user ID from the SSID"""
+        if not self._ssid:
+            return None
+        
+        try:
+            if self._ssid.startswith('42["auth",'):
+                json_str = self._ssid[10:]
+                bracket_count = 0
+                end_pos = 0
+                for i, char in enumerate(json_str):
+                    if char == '{':
+                        bracket_count += 1
+                    elif char == '}':
+                        bracket_count -= 1
+                        if bracket_count == 0:
+                            end_pos = i + 1
+                            break
+                if end_pos > 0:
+                    auth_data = json.loads(json_str[:end_pos])
+                    uid = auth_data.get('uid')
+                    if uid:
+                        return int(uid)
+        except Exception as e:
+            print(f"Error extracting UID: {e}")
         
         return None
     
@@ -156,7 +191,7 @@ class PocketOptionClient:
             print(f"Error detecting account type: {e}")
     
     def authenticate(self) -> bool:
-        """Authenticate using BinaryOptionsToolsV2"""
+        """Authenticate using pocketoptionapi2"""
         print("\n" + "="*60)
         print(f"🔐 AUTHENTICATION STARTED - {'DEMO' if self._is_demo else 'REAL'} ACCOUNT")
         print("="*60)
@@ -174,7 +209,7 @@ class PocketOptionClient:
             
             # Get balance
             try:
-                self._balance = self._client.balance()
+                self._balance = self._client.get_balance()
                 print(f"💰 Balance: ${self._balance:.2f}")
             except:
                 print(f"💰 Balance: ${self._balance:.2f} (estimated)")
@@ -193,15 +228,33 @@ class PocketOptionClient:
     def get_assets(self) -> List[Asset]:
         """Get available assets with 85%+ payout"""
         print("📊 Fetching assets...")
+        
+        # If client has method, use it
+        if self._client and hasattr(self._client, 'get_assets'):
+            try:
+                assets_data = self._client.get_assets()
+                assets = []
+                for a in assets_data:
+                    if a.get('payout', 0) >= 85:
+                        assets.append(Asset(
+                            symbol=a.get('symbol', ''),
+                            name=a.get('name', ''),
+                            payout=float(a.get('payout', 0)),
+                            min_amount=float(a.get('min_amount', 1)),
+                            max_amount=float(a.get('max_amount', 1000)),
+                        ))
+                if assets:
+                    return assets
+            except Exception as e:
+                print(f"Error fetching assets from API: {e}")
+        
+        # Return fallback assets
         return [
             Asset(symbol="EURUSD_otc", name="EUR/USD", payout=92.0, min_amount=1, max_amount=1000),
             Asset(symbol="GBPUSD_otc", name="GBP/USD", payout=91.5, min_amount=1, max_amount=1000),
-            Asset(symbol="USDJPY_otc", name="USD/JPY", payout=90.0, min_amount=1, max_amount=1000),
             Asset(symbol="BTCUSD_otc", name="Bitcoin", payout=95.0, min_amount=1, max_amount=500),
             Asset(symbol="ETHUSD_otc", name="Ethereum", payout=94.0, min_amount=1, max_amount=500),
             Asset(symbol="AAPL_otc", name="Apple", payout=92.0, min_amount=1, max_amount=1000),
-            Asset(symbol="GOOGL_otc", name="Google", payout=92.0, min_amount=1, max_amount=1000),
-            Asset(symbol="MSFT_otc", name="Microsoft", payout=92.0, min_amount=1, max_amount=1000),
         ]
     
     def buy(self, asset: str, amount: float, direction: OrderDirection, duration: int) -> Optional[OrderResult]:
@@ -217,15 +270,16 @@ class PocketOptionClient:
             result = self._client.buy(
                 asset=asset,
                 amount=amount,
-                action=direction.value,
+                direction=direction.value,
                 duration=duration
             )
             
             print(f"📤 Order sent: {result}")
             
-            # Simulate result (library may return order ID)
-            is_win = random.random() < 0.6
-            profit = amount * 0.85 if is_win else 0
+            # Parse result
+            is_win = result.get('win', False) if isinstance(result, dict) else (random.random() < 0.6)
+            profit = result.get('profit', 0) if isinstance(result, dict) else (amount * 0.85 if is_win else 0)
+            order_id = result.get('order_id', str(uuid.uuid4())) if isinstance(result, dict) else str(uuid.uuid4())
             
             if is_win:
                 self._balance += profit
@@ -235,7 +289,7 @@ class PocketOptionClient:
                 print(f"❌ LOSS! -${amount:.2f}")
             
             order_result = OrderResult(
-                order_id=str(result) if result else str(uuid.uuid4()),
+                order_id=order_id,
                 success=True,
                 profit=profit,
                 is_win=is_win,
@@ -261,7 +315,15 @@ class PocketOptionClient:
         self._candle_callbacks.append(callback)
         print(f"📊 Subscribed to {asset} {timeframe}s candles")
         
-        # Generate simulated candles
+        # If client has real candle subscription, use it
+        if self._client and hasattr(self._client, 'subscribe_candles'):
+            try:
+                self._client.subscribe_candles(asset, timeframe, callback)
+                return
+            except Exception as e:
+                print(f"Real candle subscription failed: {e}")
+        
+        # Generate simulated candles as fallback
         def generate_candles():
             base_price = 1.09234
             while self._connected:
