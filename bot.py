@@ -115,39 +115,29 @@ def index():
 
 @app.route('/api/connect', methods=['POST'])
 def connect():
-    """Connect to Pocket Option using SSID from environment variable"""
+    """Connect to Pocket Option using email/password (auto-login)"""
     global client
     
     print("🔵 CONNECT endpoint called")
     
     try:
         data = request.json
+        email = data.get('email')
+        password = data.get('password')
         account_type = data.get('account_type', 'demo')
+        is_demo = account_type == 'demo'
         
-        print(f"📡 Account type: {account_type.upper()}")
+        if not email or not password:
+            return jsonify({'success': False, 'error': 'Email and password required'})
         
-        # Get the appropriate SSID based on account type
-        if account_type == 'demo':
-            ssid = os.environ.get('PO_SSID_DEMO', '')
-            account_name = "DEMO"
-        else:
-            ssid = os.environ.get('PO_SSID_REAL', '')
-            account_name = "REAL"
+        print(f"📡 Account type: {'DEMO' if is_demo else 'REAL'}")
+        print(f"📡 Email: {email}")
         
-        if not ssid:
-            print(f"❌ No SSID found for {account_name} account")
-            return jsonify({'success': False, 'error': f'No SSID found for {account_name} account. Check environment variables.'})
-        
-        print(f"📡 SSID length: {len(ssid)} chars")
-        print(f"📡 SSID preview: {ssid[:80]}...")
-        
-        # Create client - NO is_demo parameter
+        # Create client
         client = PocketOptionClient()
+        client.set_credentials(email, password, is_demo)
         
-        # Set the SSID
-        client.set_ssid(ssid)
-        
-        # Authenticate
+        # Authenticate (auto-login with CAPTCHA handling)
         if client.authenticate():
             balance = client.get_balance()
             print(f"✅ Connection successful! Balance: ${balance:.2f}")
@@ -155,15 +145,13 @@ def connect():
             # Connect WebSocket
             if client.connect_websocket():
                 print("✅ WebSocket connected successfully")
-            else:
-                print("⚠️ WebSocket connection issue, but API is connected")
             
             socketio.emit('log', {'message': f'Connected to Pocket Option! Balance: ${balance:.2f}', 'type': 'success'})
             return jsonify({'success': True, 'balance': balance})
         else:
             print("❌ Authentication failed")
-            socketio.emit('log', {'message': 'Authentication failed. Check your SSID environment variables.', 'type': 'error'})
-            return jsonify({'success': False, 'error': 'Authentication failed. Check your PO_SSID_DEMO/PO_SSID_REAL environment variables.'})
+            socketio.emit('log', {'message': 'Authentication failed. Check your credentials.', 'type': 'error'})
+            return jsonify({'success': False, 'error': 'Authentication failed. Check your email/password.'})
             
     except Exception as e:
         print(f"❌ Connection error: {e}")
@@ -313,32 +301,23 @@ def _get_candle_interval(timeframe: str) -> int:
 
 
 def _calculate_time_to_next_candle(timeframe_seconds: int) -> int:
-    """Calculate seconds until next candle closes (for 30s pre-candle signal)"""
+    """Calculate seconds until next candle closes"""
     current_time = time.time()
-    
-    # Calculate when current candle started
     candle_start = int(current_time / timeframe_seconds) * timeframe_seconds
-    
-    # Calculate when candle will end
     candle_end = candle_start + timeframe_seconds
-    
-    # Signal should be sent 30 seconds before candle ends
     signal_time = candle_end - 30
-    
     time_remaining = signal_time - current_time
-    
     return max(0, int(time_remaining))
 
 
 def _bot_loop():
-    """Main bot loop - runs in background thread"""
+    """Main bot loop"""
     global martingale_state, trade_stats
     
     print("🔄 Bot loop started")
     timeframe_seconds = _get_candle_interval(current_timeframe)
     candle_data = []
     
-    # Callback for candle updates
     def on_candle(asset, timeframe, candle):
         if asset != current_asset:
             return
@@ -352,20 +331,16 @@ def _bot_loop():
             'volume': candle.volume
         })
         
-        # Keep only last 200 candles
         while len(candle_data) > 200:
             candle_data.pop(0)
         
-        # Check if it's time to generate signal (30 seconds before candle closes)
         time_remaining = _calculate_time_to_next_candle(timeframe_seconds)
         
         if time_remaining <= 30 and time_remaining >= 0:
-            # Generate signal
             if len(candle_data) >= 50:
                 strategy = TradingStrategy(timeframe=current_timeframe)
                 signal = strategy.analyze(candle_data)
                 
-                # Add time remaining to signal
                 signal_dict = {
                     'direction': signal.direction,
                     'confidence': signal.confidence,
@@ -379,15 +354,12 @@ def _bot_loop():
                 
                 socketio.emit('signal', signal_dict)
                 
-                # Auto-trade if bot is running and signal is strong enough
                 if bot_running and signal.direction in ['CALL', 'PUT'] and signal.confidence >= 60:
                     _execute_trade(signal.direction, signal.price)
     
-    # Subscribe to candles
     if client:
         client.subscribe_candles(current_asset, timeframe_seconds, on_candle)
     
-        # Register order result callback
         def on_order_result(result):
             global trade_stats, martingale_state
             
@@ -407,7 +379,6 @@ def _bot_loop():
                     'amount': result.amount
                 })
                 
-                # Reset martingale on win
                 if martingale_state['active']:
                     martingale_state = {
                         "active": False,
@@ -429,17 +400,14 @@ def _bot_loop():
                     'amount': result.amount
                 })
                 
-                # Handle martingale recovery
                 if martingale_enabled and bot_running:
                     if not martingale_state['active']:
-                        # Start new martingale sequence
                         martingale_state['active'] = True
                         martingale_state['step'] = 1
                         martingale_state['current_amount'] = current_amount
                         martingale_state['total_loss'] = result.amount
                         martingale_state['original_direction'] = result.direction
                     else:
-                        # Continue existing sequence
                         martingale_state['step'] += 1
                         martingale_state['current_amount'] = martingale_state['current_amount'] * 2.3
                         martingale_state['total_loss'] += result.amount
@@ -449,12 +417,10 @@ def _bot_loop():
                         'type': 'warning'
                     })
                     
-                    # Execute next martingale trade immediately
                     _execute_trade(martingale_state['original_direction'], None, martingale=True)
         
         client.on_order_result(on_order_result)
     
-    # Keep thread alive
     while bot_running:
         time.sleep(0.1)
     
@@ -469,13 +435,11 @@ def _execute_trade(direction: str, price: float = None, martingale: bool = False
     if not client or not client.is_connected:
         return
     
-    # Determine amount
     if martingale and martingale_state['active']:
         amount = martingale_state['current_amount'] * 2.3
     else:
         amount = current_amount
     
-    # Ensure minimum amount
     if amount < 1:
         amount = current_amount
     
@@ -493,19 +457,17 @@ def _execute_trade(direction: str, price: float = None, martingale: bool = False
 
 @socketio.on('connect')
 def handle_connect():
-    """Handle client WebSocket connection"""
     print("🔌 Socket.IO client connected")
     emit('log', {'message': 'Connected to PO TRADING MATE server', 'type': 'success'})
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Handle client WebSocket disconnection"""
     print("🔌 Socket.IO client disconnected")
 
 
 # ============================================================
-# RENDER DEPLOYMENT - Main entry point with error handling
+# RENDER DEPLOYMENT
 # ============================================================
 
 if __name__ == '__main__':
@@ -514,21 +476,6 @@ if __name__ == '__main__':
         print("🚀 PO TRADING MATE Starting...")
         print("=" * 60)
         
-        # Check for environment variables
-        demo_ssid = os.environ.get('PO_SSID_DEMO', '')
-        real_ssid = os.environ.get('PO_SSID_REAL', '')
-        
-        if demo_ssid:
-            print(f"✅ PO_SSID_DEMO found (length: {len(demo_ssid)} chars)")
-        else:
-            print("❌ WARNING: PO_SSID_DEMO environment variable is NOT set!")
-        
-        if real_ssid:
-            print(f"✅ PO_SSID_REAL found (length: {len(real_ssid)} chars)")
-        else:
-            print("❌ WARNING: PO_SSID_REAL environment variable is NOT set!")
-        
-        # Get the port from environment variable (Render sets this automatically)
         port = int(os.environ.get('PORT', 10000))
         
         print(f"📍 Port: {port}")
@@ -536,7 +483,6 @@ if __name__ == '__main__':
         print(f"📍 Debug: False")
         print("=" * 60)
         
-        # Run the app with SocketIO
         socketio.run(
             app,
             host='0.0.0.0',
