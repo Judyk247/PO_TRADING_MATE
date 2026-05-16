@@ -38,10 +38,11 @@
         .log{background:#1a1a2e;color:#0f0;font-family:monospace;font-size:10px;padding:10px;border-radius:10px;height:120px;overflow-y:auto}
         .flex{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}
         .form-group{margin-bottom:15px}
-        .form-group select{width:100%;padding:10px}
+        .form-group input,.form-group select{width:100%;padding:10px}
         .mb-10{margin-bottom:10px}
         .text-center{text-align:center}
         button{cursor:pointer}
+        .countdown{font-size:16px;font-weight:bold;color:#ffd700;background:#1a2a6a;padding:8px;border-radius:8px;text-align:center;margin-top:10px}
     </style>
 </head>
 <body>
@@ -91,6 +92,7 @@
             <div id="signalBox" class="signal signal-hold"><strong>⚪ WAITING ⚪</strong></div>
             <div style="background:#e0e0e0;border-radius:10px;height:20px;margin-top:10px"><div id="confidenceFill" style="background:#28a745;height:100%;border-radius:10px;width:0%"></div></div>
             <div class="text-center mt-10">Confidence: <strong id="confidenceVal">0</strong>%</div>
+            <div id="countdownDisplay" class="countdown" style="display:none"></div>
         </div>
 
         <div class="flex"><button id="manualCall" class="btn-call" onclick="manualTrade('CALL')">📈 CALL</button><button id="manualPut" class="btn-put" onclick="manualTrade('PUT')">📉 PUT</button></div>
@@ -103,11 +105,12 @@
         <div class="card">
             <div class="card-title">📊 STATS</div>
             <div class="flex"><div><strong>STATUS</strong><br><span id="botStatus">STOPPED</span></div><div><strong>TRADES</strong><br><span id="tradeCount">0</span></div><div><strong>P/L</strong><br><span id="netProfit">$0</span></div></div>
+            <div class="mt-10"><strong>LAST TRADE:</strong> <span id="lastTradeText">--</span></div>
         </div>
 
         <div class="card">
             <div class="card-title">📋 LOG</div>
-            <div id="logConsole" class="log">🟢 Ready<br>📡 Click CONNECT in ACCOUNT tab</div>
+            <div id="logConsole" class="log">🟢 Ready<br>📡 Enter credentials in ACCOUNT tab</div>
         </div>
     </div>
 
@@ -123,10 +126,18 @@
         </div>
     </div>
 
-    <!-- Account Page - Simplified - No Email/Password Required -->
+    <!-- Account Page -->
     <div id="page-account" class="page">
         <div class="card">
             <div class="card-title">👤 CONNECT TO POCKET OPTION</div>
+            <div class="form-group">
+                <label>📧 EMAIL</label>
+                <input type="email" id="email" placeholder="Enter your Pocket Option email">
+            </div>
+            <div class="form-group">
+                <label>🔑 PASSWORD</label>
+                <input type="password" id="password" placeholder="Enter your password">
+            </div>
             <div class="form-group">
                 <label>🏦 ACCOUNT TYPE</label>
                 <select id="accountType">
@@ -142,9 +153,9 @@
                 <label>🎯 MIN PAYOUT:</label>
                 <span style="font-weight:bold;color:#1a2a6a">85%</span>
             </div>
-            <div class="form-group" style="margin-top:15px">
-                <label>ℹ️ INFO:</label>
-                <span style="font-size:12px;color:#666">SSID is loaded from environment variable. No login required.</span>
+            <div class="form-group" style="margin-top:10px">
+                <label>ℹ️ NOTE:</label>
+                <span style="font-size:12px;color:#666">First time connecting will open a browser for CAPTCHA. You only need to solve it once.</span>
             </div>
         </div>
     </div>
@@ -184,18 +195,26 @@ function setMartingale(on){
     }
 }
 
-// Connect to Pocket Option - NO EMAIL/PASSWORD REQUIRED
+// Connect to Pocket Option
 async function connectToPocket(){
-    addLog('🔐 Connecting to Pocket Option...');
-    document.getElementById('status').innerHTML='🟡 Connecting...';
-    
+    let email = document.getElementById('email').value;
+    let password = document.getElementById('password').value;
     let accountType = document.getElementById('accountType').value;
+    
+    if(!email || !password){
+        alert('Please enter email and password');
+        return;
+    }
+    
+    addLog('🔐 Connecting to Pocket Option...');
+    addLog('📡 Browser will open for CAPTCHA (may take a moment)');
+    document.getElementById('status').innerHTML='🟡 Connecting...';
     
     try{
         let res=await fetch('/api/connect',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ account_type: accountType })
+            body:JSON.stringify({ email, password, account_type: accountType })
         });
         let data=await res.json();
         
@@ -221,6 +240,7 @@ async function disconnectFromPocket(){
         await fetch('/api/disconnect',{method:'POST'});
         addLog('🔌 Disconnected');
         document.getElementById('status').innerHTML='🔴 Disconnected';
+        document.getElementById('botStatus').innerHTML='STOPPED';
     }catch(e){
         addLog('Error disconnecting: '+e.message);
     }
@@ -324,6 +344,7 @@ socket.on('signal',function(signal){
     let confidenceFill=document.getElementById('confidenceFill');
     let confidenceVal=document.getElementById('confidenceVal');
     let rulesList=document.getElementById('rulesList');
+    let countdownDiv=document.getElementById('countdownDisplay');
     
     if(signal.direction==='CALL'){
         box.className='signal signal-call';
@@ -339,6 +360,13 @@ socket.on('signal',function(signal){
     if(confidenceFill) confidenceFill.style.width=signal.confidence+'%';
     if(confidenceVal) confidenceVal.textContent=signal.confidence;
     
+    if(signal.time_remaining && signal.time_remaining <= 30){
+        countdownDiv.style.display='block';
+        countdownDiv.innerHTML=`⏰ SIGNAL READY - ${signal.time_remaining} SECONDS REMAINING ⏰`;
+    }else{
+        countdownDiv.style.display='none';
+    }
+    
     if(rulesList && signal.rules_passed){
         rulesList.innerHTML=signal.rules_passed.map(r=>`<li>${r}</li>`).join('');
     }
@@ -350,12 +378,15 @@ socket.on('trade_result',function(result){
     if(result.is_win){
         addLog(`✅ TRADE WIN! Profit: +$${result.profit.toFixed(2)}`);
         let netProfit=document.getElementById('netProfit');
-        if(netProfit && result.net_profit) netProfit.textContent=`$${result.net_profit.toFixed(2)}`;
+        if(netProfit) netProfit.textContent=`$${result.profit.toFixed(2)}`;
     }else{
         addLog(`❌ TRADE LOSS! Loss: -$${result.amount.toFixed(2)}`);
     }
     if(result.trade_count && document.getElementById('tradeCount')){
         document.getElementById('tradeCount').textContent=result.trade_count;
+    }
+    if(result.last_trade && document.getElementById('lastTradeText')){
+        document.getElementById('lastTradeText').textContent=result.last_trade;
     }
 });
 
@@ -365,7 +396,7 @@ socket.on('log',function(data){
 
 // Initialize
 addLog('🚀 PO TRADING MATE initialized');
-addLog('📡 Click CONNECT in ACCOUNT tab to connect to Pocket Option');
+addLog('📡 Enter your Pocket Option credentials in ACCOUNT tab and click CONNECT');
 </script>
 </body>
-                                         </html>
+                                                                                                                                                                                                                                                                                                                                         </html>
