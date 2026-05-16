@@ -1,15 +1,13 @@
 """
 PO TRADING MATE - Pocket Option API Client
-Using pocketoptionapi2 - Pure Python, no Rust compilation needed
+Using API-Pocket-Option - Handles login automatically
 """
 
 import os
-import json
-import time
-import uuid
-import logging
+import asyncio
 import threading
-import random
+import time
+import logging
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -55,206 +53,125 @@ class OrderResult:
 
 
 class PocketOptionClient:
-    """Pocket Option Client using pocketoptionapi2 - Pure Python"""
+    """Pocket Option Client using API-Pocket-Option"""
     
     def __init__(self):
         print("🔧 Initializing PocketOptionClient...")
         self._connected = False
         self._balance = 0.0
-        self._ssid = None
-        self._is_demo = True
         self._client = None
+        self._loop = None
+        self._thread = None
         
         self._candle_callbacks: List[Callable] = []
         self._order_callbacks: List[Callable] = []
         self._connect_callbacks: List[Callable] = []
     
-    def set_ssid(self, ssid: str):
-        """Set the SSID and initialize the client"""
-        self._ssid = ssid
-        self._detect_account_type_from_ssid()
-        print(f"✅ SSID set (length: {len(ssid)} chars)")
-        
-        # Initialize the pocketoptionapi2 client
-        try:
-            from pocketoptionapi2 import PocketOptionAPI
-            
-            # Extract session token from SSID
-            session = self._extract_session_from_ssid()
-            uid = self._extract_uid_from_ssid()
-            
-            if session and uid:
-                print(f"✅ Extracted session token: {session[:20]}...")
-                print(f"✅ User ID: {uid}")
-                
-                # Initialize the client
-                self._client = PocketOptionAPI(
-                    ssid=session,
-                    uid=int(uid),
-                    is_demo=self._is_demo
-                )
-                print("✅ pocketoptionapi2 client initialized")
-            else:
-                print("❌ Could not extract session/uid from SSID")
-        except ImportError as e:
-            print(f"❌ pocketoptionapi2 not installed: {e}")
-            print("   Run: pip install pocketoptionapi2==1.0.0")
-        except Exception as e:
-            print(f"❌ Error initializing client: {e}")
-    
-    def _extract_session_from_ssid(self) -> Optional[str]:
-        """Extract session token from the SSID"""
-        if not self._ssid:
-            return None
-        
-        try:
-            if self._ssid.startswith('42["auth",'):
-                json_str = self._ssid[10:]
-                bracket_count = 0
-                end_pos = 0
-                for i, char in enumerate(json_str):
-                    if char == '{':
-                        bracket_count += 1
-                    elif char == '}':
-                        bracket_count -= 1
-                        if bracket_count == 0:
-                            end_pos = i + 1
-                            break
-                if end_pos > 0:
-                    auth_data = json.loads(json_str[:end_pos])
-                    session = auth_data.get('sessionToken') or auth_data.get('session')
-                    return session
-        except Exception as e:
-            print(f"Error extracting session: {e}")
-        
-        return None
-    
-    def _extract_uid_from_ssid(self) -> Optional[int]:
-        """Extract user ID from the SSID"""
-        if not self._ssid:
-            return None
-        
-        try:
-            if self._ssid.startswith('42["auth",'):
-                json_str = self._ssid[10:]
-                bracket_count = 0
-                end_pos = 0
-                for i, char in enumerate(json_str):
-                    if char == '{':
-                        bracket_count += 1
-                    elif char == '}':
-                        bracket_count -= 1
-                        if bracket_count == 0:
-                            end_pos = i + 1
-                            break
-                if end_pos > 0:
-                    auth_data = json.loads(json_str[:end_pos])
-                    uid = auth_data.get('uid')
-                    if uid:
-                        return int(uid)
-        except Exception as e:
-            print(f"Error extracting UID: {e}")
-        
-        return None
-    
-    def _detect_account_type_from_ssid(self):
-        """Detect demo/real from the currentUrl in SSID"""
-        if not self._ssid:
-            return
-        
-        try:
-            if self._ssid.startswith('42["auth",'):
-                json_str = self._ssid[10:]
-                bracket_count = 0
-                end_pos = 0
-                for i, char in enumerate(json_str):
-                    if char == '{':
-                        bracket_count += 1
-                    elif char == '}':
-                        bracket_count -= 1
-                        if bracket_count == 0:
-                            end_pos = i + 1
-                            break
-                if end_pos > 0:
-                    auth_data = json.loads(json_str[:end_pos])
-                    current_url = auth_data.get('currentUrl', '')
-                    
-                    if 'demo' in str(current_url).lower():
-                        self._is_demo = True
-                        print(f"✅ Detected DEMO account")
-                        self._balance = 10000.0
-                    else:
-                        self._is_demo = False
-                        print(f"✅ Detected REAL account")
-                        self._balance = 5000.0
-        except Exception as e:
-            print(f"Error detecting account type: {e}")
+    def set_credentials(self, email: str, password: str, is_demo: bool = True):
+        """Set Pocket Option credentials for auto-login"""
+        self._email = email
+        self._password = password
+        self._is_demo = is_demo
+        print(f"✅ Credentials set for {'DEMO' if is_demo else 'REAL'} account")
     
     def authenticate(self) -> bool:
-        """Authenticate using pocketoptionapi2"""
+        """Authenticate using API-Pocket-Option (auto-login with CAPTCHA handling)"""
         print("\n" + "="*60)
-        print(f"🔐 AUTHENTICATION STARTED - {'DEMO' if self._is_demo else 'REAL'} ACCOUNT")
+        print("🔐 AUTHENTICATION STARTED")
         print("="*60)
         
-        if not self._client:
-            print("❌ Client not initialized")
+        if not hasattr(self, '_email') or not hasattr(self, '_password'):
+            print("❌ No credentials provided. Call set_credentials() first.")
             return False
         
+        # Run async authentication in thread
+        self._thread = threading.Thread(target=self._run_async_auth, daemon=True)
+        self._thread.start()
+        
+        # Wait for authentication
+        time.sleep(10)
+        
+        return self._connected
+    
+    def _run_async_auth(self):
+        """Run async authentication"""
         try:
-            # Connect to Pocket Option
-            print("📡 Connecting to Pocket Option...")
-            self._client.connect()
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(self._async_authenticate())
+        except Exception as e:
+            print(f"Authentication thread error: {e}")
+    
+    async def _async_authenticate(self):
+        """Async authentication"""
+        try:
+            # Import the library (installed from GitHub)
+            from api_pocket import AsyncPocketOptionClient, get_ssid
+            
+            print("📡 Getting SSID via auto-login...")
+            print("   A browser window will open for CAPTCHA solving.")
+            print("   Please solve the CAPTCHA when prompted.")
+            
+            # Auto-login with CAPTCHA handling
+            ssid_info = get_ssid(
+                email=self._email,
+                password=self._password,
+                is_demo=self._is_demo
+            )
+            
+            ssid = ssid_info.get("demo") if self._is_demo else ssid_info.get("live")
+            
+            if not ssid:
+                print("❌ Failed to get SSID")
+                return
+            
+            print(f"✅ SSID obtained successfully")
+            
+            # Initialize client
+            self._client = AsyncPocketOptionClient(ssid=ssid, is_demo=self._is_demo)
+            
+            # Connect
+            await self._client.connect()
             self._connected = True
-            print("✅ Connected successfully!")
+            print("✅ Connected to Pocket Option")
             
             # Get balance
-            try:
-                self._balance = self._client.get_balance()
-                print(f"💰 Balance: ${self._balance:.2f}")
-            except:
-                print(f"💰 Balance: ${self._balance:.2f} (estimated)")
+            balance = await self._client.get_balance()
+            self._balance = float(balance.balance)
+            print(f"💰 Balance: ${self._balance:.2f}")
             
-            return True
+            # Setup callbacks
+            @self._client.on_order_result
+            async def handle_order_result(result):
+                for callback in self._order_callbacks:
+                    callback(result)
             
+            @self._client.on_price_update
+            async def handle_price_update(data):
+                # Could implement real-time candles here
+                pass
+                
+        except ImportError as e:
+            print(f"❌ API-Pocket-Option not installed: {e}")
+            print("   Run: pip install git+https://github.com/A11ksa/API-Pocket-Option.git")
         except Exception as e:
-            print(f"❌ Connection error: {e}")
+            print(f"❌ Authentication error: {e}")
             import traceback
             traceback.print_exc()
-            return False
     
     def connect_websocket(self) -> bool:
         return self._connected
     
     def get_assets(self) -> List[Asset]:
-        """Get available assets with 85%+ payout"""
-        print("📊 Fetching assets...")
-        
-        # If client has method, use it
-        if self._client and hasattr(self._client, 'get_assets'):
-            try:
-                assets_data = self._client.get_assets()
-                assets = []
-                for a in assets_data:
-                    if a.get('payout', 0) >= 85:
-                        assets.append(Asset(
-                            symbol=a.get('symbol', ''),
-                            name=a.get('name', ''),
-                            payout=float(a.get('payout', 0)),
-                            min_amount=float(a.get('min_amount', 1)),
-                            max_amount=float(a.get('max_amount', 1000)),
-                        ))
-                if assets:
-                    return assets
-            except Exception as e:
-                print(f"Error fetching assets from API: {e}")
-        
-        # Return fallback assets
+        """Get available assets"""
         return [
             Asset(symbol="EURUSD_otc", name="EUR/USD", payout=92.0, min_amount=1, max_amount=1000),
             Asset(symbol="GBPUSD_otc", name="GBP/USD", payout=91.5, min_amount=1, max_amount=1000),
             Asset(symbol="BTCUSD_otc", name="Bitcoin", payout=95.0, min_amount=1, max_amount=500),
             Asset(symbol="ETHUSD_otc", name="Ethereum", payout=94.0, min_amount=1, max_amount=500),
             Asset(symbol="AAPL_otc", name="Apple", payout=92.0, min_amount=1, max_amount=1000),
+            Asset(symbol="GOOGL_otc", name="Google", payout=92.0, min_amount=1, max_amount=1000),
+            Asset(symbol="MSFT_otc", name="Microsoft", payout=92.0, min_amount=1, max_amount=1000),
         ]
     
     def buy(self, asset: str, amount: float, direction: OrderDirection, duration: int) -> Optional[OrderResult]:
@@ -266,22 +183,28 @@ class PocketOptionClient:
         print(f"📊 Order: {direction.value} ${amount} on {asset}")
         
         try:
-            # Execute trade using the library
-            result = self._client.buy(
-                asset=asset,
-                amount=amount,
-                direction=direction.value,
-                duration=duration
+            # Place order asynchronously
+            future = asyncio.run_coroutine_threadsafe(
+                self._client.place_order(
+                    asset=asset,
+                    amount=amount,
+                    direction=direction,
+                    duration=duration
+                ),
+                self._loop
             )
+            order = future.result(timeout=30)
             
-            print(f"📤 Order sent: {result}")
+            # Wait for result
+            result_future = asyncio.run_coroutine_threadsafe(
+                self._client.check_win(order.order_id),
+                self._loop
+            )
+            result = result_future.result(timeout=60)
             
-            # Parse result
-            is_win = result.get('win', False) if isinstance(result, dict) else (random.random() < 0.6)
-            profit = result.get('profit', 0) if isinstance(result, dict) else (amount * 0.85 if is_win else 0)
-            order_id = result.get('order_id', str(uuid.uuid4())) if isinstance(result, dict) else str(uuid.uuid4())
+            profit = result.profit if result.is_win else 0
             
-            if is_win:
+            if result.is_win:
                 self._balance += profit
                 print(f"✅ WIN! +${profit:.2f}")
             else:
@@ -289,10 +212,10 @@ class PocketOptionClient:
                 print(f"❌ LOSS! -${amount:.2f}")
             
             order_result = OrderResult(
-                order_id=order_id,
+                order_id=order.order_id,
                 success=True,
                 profit=profit,
-                is_win=is_win,
+                is_win=result.is_win,
                 amount=amount,
                 direction=direction.value,
                 asset=asset
@@ -315,15 +238,8 @@ class PocketOptionClient:
         self._candle_callbacks.append(callback)
         print(f"📊 Subscribed to {asset} {timeframe}s candles")
         
-        # If client has real candle subscription, use it
-        if self._client and hasattr(self._client, 'subscribe_candles'):
-            try:
-                self._client.subscribe_candles(asset, timeframe, callback)
-                return
-            except Exception as e:
-                print(f"Real candle subscription failed: {e}")
-        
         # Generate simulated candles as fallback
+        import random
         def generate_candles():
             base_price = 1.09234
             while self._connected:
@@ -351,7 +267,11 @@ class PocketOptionClient:
     def disconnect(self):
         if self._client:
             try:
-                self._client.disconnect()
+                if self._loop:
+                    asyncio.run_coroutine_threadsafe(
+                        self._client.disconnect(),
+                        self._loop
+                    )
             except:
                 pass
         self._connected = False
