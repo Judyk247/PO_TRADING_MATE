@@ -77,8 +77,6 @@ print("✅ Flask app and SocketIO initialized")
 # ============================================================
 # Global variables (per user sessions)
 # ============================================================
-# Note: For production, use Redis or database for session storage
-# For now, we use in-memory storage (single user)
 client: Optional[PocketOptionClient] = None
 bot_running = False
 bot_thread: Optional[threading.Thread] = None
@@ -129,11 +127,14 @@ def connect():
         account_type = data.get('account_type', 'demo')
         is_demo = account_type == 'demo'
         
-        if not email or not password:
-            return jsonify({'success': False, 'error': 'Email and password required'})
+        # DEBUG: Print received data
+        print(f"📡 Received email: {email}")
+        print(f"📡 Password length: {len(password) if password else 0}")
+        print(f"📡 Account type: {'DEMO' if is_demo else 'REAL'}")
         
-        print(f"📡 User connecting to {'DEMO' if is_demo else 'REAL'} account")
-        print(f"📡 Email: {email}")
+        if not email or not password:
+            print("❌ Missing email or password")
+            return jsonify({'success': False, 'error': 'Email and password required'})
         
         # Create client for THIS user
         client = PocketOptionClient()
@@ -143,11 +144,10 @@ def connect():
         if client.authenticate():
             balance = client.get_balance()
             print(f"✅ User connected successfully! Balance: ${balance:.2f}")
-            
             socketio.emit('log', {'message': f'Connected to YOUR Pocket Option account! Balance: ${balance:.2f}', 'type': 'success'})
             return jsonify({'success': True, 'balance': balance})
         else:
-            print("❌ Authentication failed")
+            print("❌ Authentication failed in client.authenticate()")
             socketio.emit('log', {'message': 'Authentication failed. Please check your credentials and try again.', 'type': 'error'})
             return jsonify({'success': False, 'error': 'Authentication failed. Check your email/password and try again.'})
             
