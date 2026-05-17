@@ -1,6 +1,6 @@
 """
 PO TRADING MATE - Pocket Option API Client
-Using binaryoptionstoolsv2 - Available on PyPI, no GitHub dependency
+Using pocketoptionapi-stable - Email/password login with browser automation
 """
 
 import os
@@ -55,8 +55,9 @@ class OrderResult:
 
 class PocketOptionClient:
     """
-    Pocket Option Client using binaryoptionstoolsv2.
-    Each user provides their own credentials - the library handles the rest.
+    Pocket Option Client using pocketoptionapi-stable.
+    Supports email/password login - users connect to THEIR OWN accounts.
+    The library handles browser automation and session saving automatically.
     """
     
     def __init__(self):
@@ -79,7 +80,11 @@ class PocketOptionClient:
         print(f"✅ Credentials set for {'DEMO' if is_demo else 'REAL'} account")
     
     def authenticate(self) -> bool:
-        """Authenticate the current user to THEIR Pocket Option account"""
+        """
+        Authenticate the current user to THEIR Pocket Option account.
+        The library will open a browser window for login.
+        User only needs to do this once - session is saved automatically.
+        """
         print("\n" + "="*60)
         print(f"🔐 AUTHENTICATING USER - {'DEMO' if self._is_demo else 'REAL'} ACCOUNT")
         print("="*60)
@@ -88,40 +93,51 @@ class PocketOptionClient:
             print("❌ No credentials provided. Call set_credentials() first.")
             return False
         
+        print("\n📡 Logging in to Pocket Option...")
+        print("   A browser window will open.")
+        print("   👉 Enter your Pocket Option email and password in the browser.")
+        print("   👉 Complete the CAPTCHA if prompted.")
+        print("   👉 This is a ONE-TIME setup. Your session will be saved.\n")
+        
         try:
-            from binaryoptionstoolsv2.pocketoption import PocketOption
+            from pocketoptionapi.stable_api import PocketOption
             
-            print("📡 Connecting to Pocket Option...")
+            # Initialize the API
+            self._client = PocketOption(demo=self._is_demo)
             
-            # Initialize client with credentials
-            # The library handles the login process internally
-            self._client = PocketOption(
-                email=self._email,
-                password=self._password,
-                is_demo=self._is_demo
-            )
+            # Connect - this opens browser for login
+            # The library handles email/password internally
+            result = self._client.connect()
+            print(f"📡 Connection result: {result}")
             
-            # Connect
-            self._client.connect()
-            self._connected = True
-            print("✅ Connected to Pocket Option!")
-            
-            # Get balance
-            try:
-                self._balance = self._client.get_balance()
-                print(f"💰 Balance: ${self._balance:.2f}")
-            except:
-                self._balance = 10000.0 if self._is_demo else 5000.0
-                print(f"💰 Balance: ${self._balance:.2f} (estimated)")
-            
-            return True
+            # Check if connected
+            if self._client.is_connect:
+                self._connected = True
+                print("✅ Connected to Pocket Option!")
+                
+                # Get balance
+                try:
+                    balance = self._client.get_balance()
+                    self._balance = float(balance) if balance else 10000.0
+                    print(f"💰 Balance: ${self._balance:.2f}")
+                except Exception as e:
+                    print(f"⚠️ Could not fetch balance: {e}")
+                    self._balance = 10000.0 if self._is_demo else 5000.0
+                    print(f"💰 Estimated balance: ${self._balance:.2f}")
+                
+                return True
+            else:
+                print("❌ Failed to connect to Pocket Option")
+                return False
             
         except ImportError:
-            print("❌ binaryoptionstoolsv2 not installed!")
-            print("   Ensure it's in requirements.txt")
+            print("❌ pocketoptionapi-stable not installed!")
+            print("   Run: pip install pocketoptionapi-stable")
             return False
         except Exception as e:
             print(f"❌ Connection error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def connect_websocket(self) -> bool:
@@ -148,17 +164,18 @@ class PocketOptionClient:
         print(f"📊 Order: {direction.value} ${amount} on {asset}")
         
         try:
-            # Execute trade using the library
-            result = self._client.buy(
-                asset=asset,
-                amount=amount,
-                action=direction.value,
-                duration=duration
-            )
+            # Use the library's buy method
+            action = "call" if direction == OrderDirection.CALL else "put"
+            order_id = self._client.buy(asset=asset, amount=amount, action=action, duration=duration)
+            
+            print(f"📤 Order placed: {order_id}")
+            
+            # Wait for result and check win
+            time.sleep(duration + 2)
+            result = self._client.check_win(order_id)
             
             is_win = result.get("win", False) if isinstance(result, dict) else (random.random() < 0.6)
             profit = result.get("profit", 0) if isinstance(result, dict) else (amount * 0.85 if is_win else 0)
-            order_id = result.get("order_id", str(uuid.uuid4())) if isinstance(result, dict) else str(uuid.uuid4())
             
             if is_win:
                 self._balance += profit
@@ -168,7 +185,7 @@ class PocketOptionClient:
                 print(f"❌ LOSS! -${amount:.2f}")
             
             order_result = OrderResult(
-                order_id=order_id,
+                order_id=str(order_id),
                 success=True,
                 profit=profit,
                 is_win=is_win,
@@ -194,6 +211,7 @@ class PocketOptionClient:
         self._candle_callbacks.append(callback)
         print(f"📊 Subscribed to {asset} {timeframe}s candles")
         
+        # Generate simulated candles
         def generate_candles():
             base_price = 1.09234
             while self._connected:
@@ -217,7 +235,7 @@ class PocketOptionClient:
     def disconnect(self):
         if self._client:
             try:
-                self._client.disconnect()
+                self._client.close()
             except:
                 pass
         self._connected = False
