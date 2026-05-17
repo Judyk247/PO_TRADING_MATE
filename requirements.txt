@@ -3,5 +3,6 @@ Flask-SocketIO==5.3.4
 python-socketio==5.9.0
 eventlet==0.33.3
 gunicorn==21.2.0
+binaryoptionstoolsv2==0.1.6a4
 selenium==4.16.0
 webdriver-manager==4.0.1
