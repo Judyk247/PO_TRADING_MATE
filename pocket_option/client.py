@@ -1,6 +1,6 @@
 """
 PO TRADING MATE - Pocket Option API Client
-Using pocketoptionapi-stable - Email/password login with browser automation
+Using PocketOptionAPI-v2 - Email/password login with browser automation
 """
 
 import os
@@ -55,7 +55,7 @@ class OrderResult:
 
 class PocketOptionClient:
     """
-    Pocket Option Client using pocketoptionapi-stable.
+    Pocket Option Client using PocketOptionAPI-v2.
     Supports email/password login - users connect to THEIR OWN accounts.
     The library handles browser automation and session saving automatically.
     """
@@ -95,35 +95,44 @@ class PocketOptionClient:
         
         print("\n📡 Logging in to Pocket Option...")
         print("   A browser window will open.")
-        print("   👉 Enter your Pocket Option email and password in the browser.")
+        print("   👉 The API will automatically log you in using your credentials.")
         print("   👉 Complete the CAPTCHA if prompted.")
         print("   👉 This is a ONE-TIME setup. Your session will be saved.\n")
         
         try:
+            # Correct import according to official documentation [citation:1][citation:2]
             from pocketoptionapi.stable_api import PocketOption
             
-            # Initialize the API
+            # Initialize the API - demo=True for demo account, False for real
             self._client = PocketOption(demo=self._is_demo)
             
             # Connect - this opens browser for login
-            # The library handles email/password internally
+            # The API automatically uses the credentials (it caches them)
+            print("📡 Connecting to Pocket Option...")
             result = self._client.connect()
             print(f"📡 Connection result: {result}")
             
             # Check if connected
-            if self._client.is_connect:
+            if hasattr(self._client, 'is_connect') and self._client.is_connect:
                 self._connected = True
                 print("✅ Connected to Pocket Option!")
                 
-                # Get balance
+                # Get balance using the correct method name from docs [citation:2]
                 try:
-                    balance = self._client.get_balance()
+                    # The official method is GetBalance() according to the documentation [citation:2]
+                    balance = self._client.GetBalance()
                     self._balance = float(balance) if balance else 10000.0
                     print(f"💰 Balance: ${self._balance:.2f}")
-                except Exception as e:
-                    print(f"⚠️ Could not fetch balance: {e}")
-                    self._balance = 10000.0 if self._is_demo else 5000.0
-                    print(f"💰 Estimated balance: ${self._balance:.2f}")
+                except AttributeError:
+                    # Try alternative method name
+                    try:
+                        balance = self._client.get_balance()
+                        self._balance = float(balance) if balance else 10000.0
+                        print(f"💰 Balance: ${self._balance:.2f}")
+                    except Exception as e:
+                        print(f"⚠️ Could not fetch balance: {e}")
+                        self._balance = 10000.0 if self._is_demo else 5000.0
+                        print(f"💰 Estimated balance: ${self._balance:.2f}")
                 
                 return True
             else:
@@ -131,8 +140,8 @@ class PocketOptionClient:
                 return False
             
         except ImportError:
-            print("❌ pocketoptionapi-stable not installed!")
-            print("   Run: pip install pocketoptionapi-stable")
+            print("❌ PocketOptionAPI-v2 not installed!")
+            print("   Ensure it's in requirements.txt: git+https://github.com/Mastaaa1987/PocketOptionAPI-v2.git")
             return False
         except Exception as e:
             print(f"❌ Connection error: {e}")
@@ -146,6 +155,32 @@ class PocketOptionClient:
     def get_assets(self) -> List[Asset]:
         """Get available assets with 85%+ payout"""
         print("📊 Fetching assets...")
+        
+        # Try to get pairs from the API if connected [citation:2]
+        if self._connected and self._client:
+            try:
+                if hasattr(self._client, 'GetPairs'):
+                    pairs_data = self._client.GetPairs()
+                    print(f"📊 Retrieved {len(pairs_data)} pairs from API")
+                    # Convert to our Asset format
+                    assets = []
+                    for symbol, info in pairs_data.items():
+                        if isinstance(info, dict):
+                            payout = info.get('payout', 92.0)
+                            if payout >= 85:
+                                assets.append(Asset(
+                                    symbol=symbol,
+                                    name=symbol.replace('_otc', '').replace('_', '/'),
+                                    payout=float(payout),
+                                    min_amount=1,
+                                    max_amount=1000
+                                ))
+                    if assets:
+                        return assets
+            except Exception as e:
+                print(f"Could not fetch pairs from API: {e}")
+        
+        # Return fallback assets
         return [
             Asset(symbol="EURUSD_otc", name="EUR/USD", payout=92.0, min_amount=1, max_amount=1000),
             Asset(symbol="GBPUSD_otc", name="GBP/USD", payout=91.5, min_amount=1, max_amount=1000),
@@ -164,18 +199,21 @@ class PocketOptionClient:
         print(f"📊 Order: {direction.value} ${amount} on {asset}")
         
         try:
-            # Use the library's buy method
+            # Use the library's Buy method as per documentation [citation:2]
             action = "call" if direction == OrderDirection.CALL else "put"
-            order_id = self._client.buy(asset=asset, amount=amount, action=action, duration=duration)
+            # According to the docs: api.Buy(amount, pair, action, expirations) [citation:2]
+            status, order_id = self._client.Buy(amount, asset, action, duration)
             
-            print(f"📤 Order placed: {order_id}")
+            print(f"📤 Order placed: {order_id} (Status: {status})")
             
             # Wait for result and check win
             time.sleep(duration + 2)
-            result = self._client.check_win(order_id)
             
-            is_win = result.get("win", False) if isinstance(result, dict) else (random.random() < 0.6)
-            profit = result.get("profit", 0) if isinstance(result, dict) else (amount * 0.85 if is_win else 0)
+            # Use CheckWin method from documentation [citation:2]
+            profit, win_status = self._client.CheckWin(order_id)
+            
+            is_win = win_status == 'win' or win_status is True
+            profit = float(profit) if profit else (amount * 0.85 if is_win else 0)
             
             if is_win:
                 self._balance += profit
