@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     make \
+    git \
     libc6-dev \
     wget \
     gnupg \
@@ -49,7 +50,7 @@ RUN wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/120.0.6
 # Copy requirements first (for better caching)
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies (installs PocketOptionAPI-v2 from GitHub)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the entire application
