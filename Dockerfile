@@ -50,8 +50,11 @@ RUN wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/120.0.6
 # Copy requirements first (for better caching)
 COPY requirements.txt .
 
-# Install Python dependencies (installs PocketOptionAPI-v2 from GitHub)
+# Install Python dependencies from PyPI
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install PocketOptionAPI-v2 directly from GitHub (correct format)
+RUN pip install --no-cache-dir git+https://github.com/Mastaaa1987/PocketOptionAPI-v2.git
 
 # Copy the entire application
 COPY . .
