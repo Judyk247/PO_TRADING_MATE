@@ -25,8 +25,8 @@
         .btn-stop{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%;cursor:pointer}
         .btn-call{background:#28a745;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%;cursor:pointer}
         .btn-put{background:#dc3545;color:white;padding:12px;border:none;border-radius:10px;font-weight:bold;width:48%;cursor:pointer}
-        .btn-connect{background:#28a745;color:white;padding:10px;border:none;border-radius:5px;font-weight:bold;width:48%;cursor:pointer}
-        .btn-disconnect{background:#dc3545;color:white;padding:10px;border:none;border-radius:5px;font-weight:bold;width:48%;cursor:pointer}
+        .btn-connect{background:#28a745;color:white;padding:10px 20px;border:none;border-radius:5px;font-weight:bold;cursor:pointer}
+        .btn-disconnect{background:#dc3545;color:white;padding:10px 20px;border:none;border-radius:5px;font-weight:bold;cursor:pointer}
         .toggle-btn{padding:8px 20px;border:none;border-radius:30px;font-weight:bold;cursor:pointer}
         .toggle-on{background:#ffd700;color:#1a2a6a}
         .toggle-off{background:#ccc;color:#666}
@@ -38,7 +38,10 @@
         .log{background:#1a1a2e;color:#0f0;font-family:monospace;font-size:10px;padding:10px;border-radius:10px;height:120px;overflow-y:auto}
         .flex{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}
         .form-group{margin-bottom:15px}
-        .form-group input,.form-group select{width:100%;padding:10px}
+        .form-group select{width:100%;padding:10px}
+        .notice{background:#e8f4f8;border-left:4px solid #1a2a6a;padding:15px;border-radius:10px;margin-bottom:15px}
+        .notice ol{margin-left:20px;line-height:1.8}
+        .notice li{margin:5px 0}
         .mb-10{margin-bottom:10px}
         .text-center{text-align:center}
         button{cursor:pointer}
@@ -110,7 +113,7 @@
 
         <div class="card">
             <div class="card-title">📋 LOG</div>
-            <div id="logConsole" class="log">🟢 Ready<br>📡 Enter credentials in ACCOUNT tab</div>
+            <div id="logConsole" class="log">🟢 Ready<br>📡 Go to ACCOUNT tab to connect</div>
         </div>
     </div>
 
@@ -126,18 +129,25 @@
         </div>
     </div>
 
-    <!-- Account Page -->
+    <!-- Account Page - Simplified (No email/password fields) -->
     <div id="page-account" class="page">
         <div class="card">
             <div class="card-title">👤 CONNECT TO POCKET OPTION</div>
-            <div class="form-group">
-                <label>📧 EMAIL</label>
-                <input type="email" id="email" placeholder="Enter your Pocket Option email">
+            
+            <div class="notice">
+                <p style="font-weight:bold; margin-bottom:10px;">🔐 How to Connect:</p>
+                <ol>
+                    <li>Select your account type below (DEMO or REAL)</li>
+                    <li>Click the CONNECT button</li>
+                    <li>A browser window will open</li>
+                    <li>Log in to your Pocket Option account in that window</li>
+                    <li>Complete the CAPTCHA if prompted</li>
+                    <li>After successful login, close the browser window</li>
+                    <li>Your session will be saved for future use</li>
+                </ol>
+                <p style="margin-top:10px; font-size:12px; color:#666;">⚠️ This is a ONE-TIME setup. You only need to log in once.</p>
             </div>
-            <div class="form-group">
-                <label>🔑 PASSWORD</label>
-                <input type="password" id="password" placeholder="Enter your password">
-            </div>
+            
             <div class="form-group">
                 <label>🏦 ACCOUNT TYPE</label>
                 <select id="accountType">
@@ -145,17 +155,15 @@
                     <option value="real">💸 REAL ACCOUNT</option>
                 </select>
             </div>
+            
             <div class="flex">
                 <button id="connectBtn" class="btn-connect" onclick="connectToPocket()">🔌 CONNECT</button>
                 <button id="disconnectBtn" class="btn-disconnect" onclick="disconnectFromPocket()">🔌 DISCONNECT</button>
             </div>
+            
             <div class="form-group" style="margin-top:15px">
                 <label>🎯 MIN PAYOUT:</label>
                 <span style="font-weight:bold;color:#1a2a6a">85%</span>
-            </div>
-            <div class="form-group" style="margin-top:10px">
-                <label>ℹ️ NOTE:</label>
-                <span style="font-size:12px;color:#666">First time connecting will open a browser for CAPTCHA. You only need to solve it once.</span>
             </div>
         </div>
     </div>
@@ -195,26 +203,19 @@ function setMartingale(on){
     }
 }
 
-// Connect to Pocket Option
+// Connect to Pocket Option - NO EMAIL/PASSWORD REQUIRED
 async function connectToPocket(){
-    let email = document.getElementById('email').value;
-    let password = document.getElementById('password').value;
     let accountType = document.getElementById('accountType').value;
     
-    if(!email || !password){
-        alert('Please enter email and password');
-        return;
-    }
-    
     addLog('🔐 Connecting to Pocket Option...');
-    addLog('📡 Browser will open for CAPTCHA (may take a moment)');
+    addLog('📡 A browser window will open for login. Please complete the CAPTCHA if prompted.');
     document.getElementById('status').innerHTML='🟡 Connecting...';
     
     try{
         let res=await fetch('/api/connect',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ email, password, account_type: accountType })
+            body:JSON.stringify({ account_type: accountType })
         });
         let data=await res.json();
         
@@ -261,6 +262,8 @@ async function loadAssets(){
                 sel.appendChild(opt);
             });
             addLog('📊 Loaded '+assets.length+' assets with 85%+ payout');
+        }else{
+            addLog('⚠️ No assets loaded. Make sure you are connected.');
         }
     }catch(e){
         addLog('❌ Failed to load assets: '+e.message);
@@ -396,7 +399,7 @@ socket.on('log',function(data){
 
 // Initialize
 addLog('🚀 PO TRADING MATE initialized');
-addLog('📡 Enter your Pocket Option credentials in ACCOUNT tab and click CONNECT');
+addLog('📡 Go to ACCOUNT tab, select DEMO or REAL, and click CONNECT');
 </script>
 </body>
-                                                                                                                                                                                                                                                                                                                                         </html>
+    </html>
