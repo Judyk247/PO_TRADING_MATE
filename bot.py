@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PO TRADING MATE - Pocket Option Auto-Trading Bot
-Main Flask Application
+Universal Authentication - Any user can log in
 """
 
 # ============================================================
@@ -33,7 +33,7 @@ print(f"📂 Files in directory: {os.listdir('.')}")
 # ============================================================
 # Third-party imports
 # ============================================================
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session
 from flask_socketio import SocketIO, emit
 
 # ============================================================
@@ -68,14 +68,17 @@ logger = logging.getLogger(__name__)
 # Initialize Flask app
 # ============================================================
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'po-trading-mate-secret-key')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24))
+app.config['SESSION_TYPE'] = 'filesystem'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 print("✅ Flask app and SocketIO initialized")
 
 # ============================================================
-# Global variables
+# Global variables (per user sessions)
 # ============================================================
+# Note: For production, use Redis or database for session storage
+# For now, we use in-memory storage (single user)
 client: Optional[PocketOptionClient] = None
 bot_running = False
 bot_thread: Optional[threading.Thread] = None
@@ -98,7 +101,6 @@ trade_stats = {
     "last_trade": None,
     "last_trade_time": None
 }
-active_subscriptions = []
 
 print("✅ Global variables initialized")
 
@@ -115,7 +117,7 @@ def index():
 
 @app.route('/api/connect', methods=['POST'])
 def connect():
-    """Connect to Pocket Option using email/password (auto-login)"""
+    """Connect the current user to THEIR Pocket Option account"""
     global client
     
     print("🔵 CONNECT endpoint called")
@@ -130,28 +132,24 @@ def connect():
         if not email or not password:
             return jsonify({'success': False, 'error': 'Email and password required'})
         
-        print(f"📡 Account type: {'DEMO' if is_demo else 'REAL'}")
+        print(f"📡 User connecting to {'DEMO' if is_demo else 'REAL'} account")
         print(f"📡 Email: {email}")
         
-        # Create client
+        # Create client for THIS user
         client = PocketOptionClient()
         client.set_credentials(email, password, is_demo)
         
-        # Authenticate (auto-login with CAPTCHA handling)
+        # Authenticate (opens browser for user to log in)
         if client.authenticate():
             balance = client.get_balance()
-            print(f"✅ Connection successful! Balance: ${balance:.2f}")
+            print(f"✅ User connected successfully! Balance: ${balance:.2f}")
             
-            # Connect WebSocket
-            if client.connect_websocket():
-                print("✅ WebSocket connected successfully")
-            
-            socketio.emit('log', {'message': f'Connected to Pocket Option! Balance: ${balance:.2f}', 'type': 'success'})
+            socketio.emit('log', {'message': f'Connected to YOUR Pocket Option account! Balance: ${balance:.2f}', 'type': 'success'})
             return jsonify({'success': True, 'balance': balance})
         else:
             print("❌ Authentication failed")
-            socketio.emit('log', {'message': 'Authentication failed. Check your credentials.', 'type': 'error'})
-            return jsonify({'success': False, 'error': 'Authentication failed. Check your email/password.'})
+            socketio.emit('log', {'message': 'Authentication failed. Please check your credentials and try again.', 'type': 'error'})
+            return jsonify({'success': False, 'error': 'Authentication failed. Check your email/password and try again.'})
             
     except Exception as e:
         print(f"❌ Connection error: {e}")
