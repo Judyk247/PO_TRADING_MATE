@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     make \
-    git \
     libc6-dev \
     wget \
     gnupg \
@@ -47,13 +46,10 @@ RUN wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/120.0.6
     && chmod +x /usr/local/bin/chromedriver \
     && rm -rf /tmp/chromedriver.zip /tmp/chromedriver-linux64
 
-# Install API-PocketOption from GitHub (for universal login)
-RUN pip install --no-cache-dir git+https://github.com/A11ksa/API-PocketOption.git
-
 # Copy requirements first (for better caching)
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies (all from PyPI - no GitHub)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the entire application
