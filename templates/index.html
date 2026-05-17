@@ -38,7 +38,7 @@
         .log{background:#1a1a2e;color:#0f0;font-family:monospace;font-size:10px;padding:10px;border-radius:10px;height:120px;overflow-y:auto}
         .flex{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}
         .form-group{margin-bottom:15px}
-        .form-group select{width:100%;padding:10px}
+        .form-group input,.form-group select{width:100%;padding:10px}
         .notice{background:#e8f4f8;border-left:4px solid #1a2a6a;padding:15px;border-radius:10px;margin-bottom:15px}
         .notice ol{margin-left:20px;line-height:1.8}
         .notice li{margin:5px 0}
@@ -129,23 +129,35 @@
         </div>
     </div>
 
-    <!-- Account Page - Simplified (No email/password fields) -->
+    <!-- Account Page - Universal Login -->
     <div id="page-account" class="page">
         <div class="card">
-            <div class="card-title">👤 CONNECT TO POCKET OPTION</div>
+            <div class="card-title">👤 CONNECT TO YOUR POCKET OPTION ACCOUNT</div>
             
             <div class="notice">
                 <p style="font-weight:bold; margin-bottom:10px;">🔐 How to Connect:</p>
                 <ol>
-                    <li>Select your account type below (DEMO or REAL)</li>
-                    <li>Click the CONNECT button</li>
+                    <li>Enter your Pocket Option email and password below</li>
+                    <li>Select your account type (DEMO or REAL)</li>
+                    <li>Click CONNECT</li>
                     <li>A browser window will open</li>
-                    <li>Log in to your Pocket Option account in that window</li>
                     <li>Complete the CAPTCHA if prompted</li>
-                    <li>After successful login, close the browser window</li>
+                    <li>After successful login, close the window</li>
                     <li>Your session will be saved for future use</li>
                 </ol>
-                <p style="margin-top:10px; font-size:12px; color:#666;">⚠️ This is a ONE-TIME setup. You only need to log in once.</p>
+                <p style="margin-top:10px; font-size:12px; color:#666;">
+                    🔒 Your credentials are never stored. They are used only to authenticate you with Pocket Option.
+                </p>
+            </div>
+            
+            <div class="form-group">
+                <label>📧 POCKET OPTION EMAIL</label>
+                <input type="email" id="email" placeholder="Enter your email">
+            </div>
+            
+            <div class="form-group">
+                <label>🔑 POCKET OPTION PASSWORD</label>
+                <input type="password" id="password" placeholder="Enter your password">
             </div>
             
             <div class="form-group">
@@ -203,24 +215,31 @@ function setMartingale(on){
     }
 }
 
-// Connect to Pocket Option - NO EMAIL/PASSWORD REQUIRED
+// Connect to YOUR Pocket Option account
 async function connectToPocket(){
+    let email = document.getElementById('email').value;
+    let password = document.getElementById('password').value;
     let accountType = document.getElementById('accountType').value;
     
-    addLog('🔐 Connecting to Pocket Option...');
-    addLog('📡 A browser window will open for login. Please complete the CAPTCHA if prompted.');
+    if(!email || !password){
+        alert('Please enter your Pocket Option email and password');
+        return;
+    }
+    
+    addLog('🔐 Connecting to YOUR Pocket Option account...');
+    addLog('📡 A browser window will open. Please log in and complete CAPTCHA if prompted.');
     document.getElementById('status').innerHTML='🟡 Connecting...';
     
     try{
         let res=await fetch('/api/connect',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ account_type: accountType })
+            body:JSON.stringify({ email, password, account_type: accountType })
         });
         let data=await res.json();
         
         if(data.success){
-            addLog('✅ Connected! Balance: $'+data.balance);
+            addLog('✅ Connected to YOUR account! Balance: $'+data.balance);
             document.getElementById('status').innerHTML='🟢 Connected | Balance: $'+data.balance;
             await loadAssets();
         }else{
@@ -399,7 +418,7 @@ socket.on('log',function(data){
 
 // Initialize
 addLog('🚀 PO TRADING MATE initialized');
-addLog('📡 Go to ACCOUNT tab, select DEMO or REAL, and click CONNECT');
+addLog('📡 Go to ACCOUNT tab, enter your Pocket Option credentials, and click CONNECT');
 </script>
 </body>
     </html>
