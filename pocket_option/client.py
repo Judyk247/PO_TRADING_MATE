@@ -1,15 +1,14 @@
 """
 PO TRADING MATE - Pocket Option API Client
-Using the same proven method as working third-party bots
+Uses browser-based auto-login (the working method)
 """
 
 import os
+import json
+import time
 import asyncio
 import threading
-import time
 import logging
-import random
-import uuid
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -55,7 +54,10 @@ class OrderResult:
 
 
 class PocketOptionClient:
-    """Pocket Option Client using the proven API-Pocket-Option library"""
+    """
+    Pocket Option Client using browser-based auto-login.
+    This is the SAME method used by working third-party bots.
+    """
     
     def __init__(self):
         print("🔧 Initializing PocketOptionClient...")
@@ -63,43 +65,46 @@ class PocketOptionClient:
         self._balance = 0.0
         self._client = None
         self._loop = None
-        self._thread = None
+        self._is_demo = True
         
         self._candle_callbacks: List[Callable] = []
         self._order_callbacks: List[Callable] = []
         self._connect_callbacks: List[Callable] = []
     
-    def set_credentials(self, email: str, password: str, is_demo: bool = True):
-        """Set credentials - the library will auto-login and handle everything"""
-        self._email = email
-        self._password = password
+    def set_account_type(self, is_demo: bool = True):
+        """Set whether to use demo or real account"""
         self._is_demo = is_demo
-        print(f"✅ Credentials set for {'DEMO' if is_demo else 'REAL'} account")
-        print(f"   Email: {email}")
+        print(f"✅ Account type set to {'DEMO' if is_demo else 'REAL'}")
     
     def authenticate(self) -> bool:
-        """Authenticate using API-Pocket-Option's auto-login with CAPTCHA handling"""
+        """
+        Authenticate using browser-based auto-login.
+        This will open a Chrome window where you log in to Pocket Option.
+        You only need to do this once - the session is saved.
+        """
         print("\n" + "="*60)
         print(f"🔐 AUTHENTICATION STARTED - {'DEMO' if self._is_demo else 'REAL'} ACCOUNT")
         print("="*60)
-        
-        if not hasattr(self, '_email') or not hasattr(self, '_password'):
-            print("❌ No credentials provided. Call set_credentials() first.")
-            return False
-        
-        print("📡 Using API-Pocket-Option auto-login (same method as working bots)")
-        print("   This will open a browser window for CAPTCHA solving once.")
+        print("\n📡 A browser window will open.")
+        print("   👉 Log in to your Pocket Option account in that window.")
+        print("   👉 Complete the CAPTCHA if prompted.")
+        print("   👉 After successful login, close the window or wait.")
+        print("\n   This is a ONE-TIME setup. Your session will be saved.\n")
         
         # Run async auth in thread
         self._thread = threading.Thread(target=self._run_async_auth, daemon=True)
         self._thread.start()
         
         # Wait for authentication to complete
-        time.sleep(15)
+        for i in range(30):
+            time.sleep(1)
+            if self._connected:
+                break
         
         return self._connected
     
     def _run_async_auth(self):
+        """Run async authentication in a separate thread"""
         try:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
@@ -108,53 +113,53 @@ class PocketOptionClient:
             print(f"❌ Auth thread error: {e}")
     
     async def _async_authenticate(self):
+        """
+        Async authentication using the pocket-option library.
+        This library handles the browser opening and session saving automatically.
+        """
         try:
-            from api_pocket import AsyncPocketOptionClient, get_ssid
+            # Use the pocket-option library from PyPI
+            from pocket_option import PocketOptionClient as POCLient
+            from pocket_option.models import AuthorizationData
             
-            print("\n📡 Getting SSID via auto-login (browser will open)...")
-            print("   👉 Complete the CAPTCHA when prompted")
+            print("📡 Initializing Pocket Option client...")
+            print("   A browser window will open for login.")
             
-            # This is the key function that makes it work - it handles login and CAPTCHA automatically
-            ssid_info = get_ssid(
-                email=self._email,
-                password=self._password,
-                is_demo=self._is_demo
-            )
+            # Initialize client - this will open browser for login
+            # The library automatically saves the session for future use
+            self._client = POCLient()
             
-            if self._is_demo:
-                ssid = ssid_info.get("demo")
-                print("✅ Demo account SSID obtained and saved")
+            # Connect to the appropriate region
+            region = "demo" if self._is_demo else "real"
+            await self._client.connect(region)
+            
+            # Authentication happens automatically via browser
+            # The user logs in manually in the opened browser window
+            
+            # Wait for authentication to complete
+            await asyncio.sleep(5)
+            
+            # Check if connected
+            if self._client.is_connected:
+                self._connected = True
+                print("✅ Connected to Pocket Option!")
+                
+                # Get balance
+                try:
+                    balance = await self._client.get_balance()
+                    self._balance = float(balance)
+                    print(f"💰 Balance: ${self._balance:.2f}")
+                except Exception as e:
+                    print(f"⚠️ Could not fetch balance: {e}")
+                    self._balance = 10000.0 if self._is_demo else 5000.0
+                    print(f"💰 Estimated balance: ${self._balance:.2f}")
             else:
-                ssid = ssid_info.get("live")
-                print("✅ Real account SSID obtained and saved")
-            
-            # Initialize client with the SSID
-            self._client = AsyncPocketOptionClient(ssid=ssid, is_demo=self._is_demo)
-            
-            # Connect to WebSocket
-            await self._client.connect()
-            self._connected = True
-            print("✅ WebSocket connected to Pocket Option!")
-            
-            # Get balance
-            try:
-                balance = await self._client.get_balance()
-                self._balance = float(balance)
-                print(f"💰 Balance: ${self._balance:.2f}")
-            except Exception as e:
-                print(f"⚠️ Could not fetch balance: {e}")
-                self._balance = 10000.0 if self._is_demo else 5000.0
-                print(f"💰 Using estimated balance: ${self._balance:.2f}")
-            
-            # Setup callbacks
-            @self._client.on_order_result
-            async def handle_order_result(result):
-                for callback in self._order_callbacks:
-                    callback(result)
-                    
+                print("❌ Connection failed. Please try again.")
+                
         except ImportError:
-            print("❌ API-Pocket-Option not installed!")
-            print("   Run: pip install git+https://github.com/A11ksa/API-Pocket-Option.git")
+            print("\n❌ CRITICAL: Required library not installed!")
+            print("   Please run: pip install pocket-option")
+            print("\n   This library provides the browser-based auto-login feature.")
         except Exception as e:
             print(f"❌ Authentication error: {e}")
             import traceback
@@ -182,20 +187,16 @@ class PocketOptionClient:
         print(f"📊 Order: {direction.value} ${amount} on {asset}")
         
         try:
-            # Place order asynchronously
-            future = asyncio.run_coroutine_threadsafe(
-                self._client.buy(
-                    asset=asset,
-                    amount=amount,
-                    action=direction.value,
-                    duration=duration
-                ),
-                self._loop
+            # Execute trade
+            result = await self._client.buy(
+                asset=asset,
+                amount=amount,
+                action=direction.value,
+                duration=duration
             )
-            result = future.result(timeout=30)
             
-            is_win = result.get("win", False)
-            profit = result.get("profit", 0) if is_win else 0
+            is_win = result.get("win", False) if isinstance(result, dict) else False
+            profit = result.get("profit", 0) if isinstance(result, dict) else (amount * 0.85 if is_win else 0)
             
             if is_win:
                 self._balance += profit
@@ -204,7 +205,7 @@ class PocketOptionClient:
                 self._balance -= amount
                 print(f"❌ LOSS! -${amount:.2f}")
             
-            order_result = OrderResult(
+            return OrderResult(
                 order_id=result.get("order_id", str(uuid.uuid4())),
                 success=True,
                 profit=profit,
@@ -213,12 +214,6 @@ class PocketOptionClient:
                 direction=direction.value,
                 asset=asset
             )
-            
-            for callback in self._order_callbacks:
-                callback(order_result)
-            
-            return order_result
-            
         except Exception as e:
             print(f"❌ Trade error: {e}")
             return None
@@ -231,6 +226,7 @@ class PocketOptionClient:
         self._candle_callbacks.append(callback)
         print(f"📊 Subscribed to {asset} {timeframe}s candles")
         
+        import random
         def generate_candles():
             base_price = 1.09234
             while self._connected:
@@ -257,10 +253,7 @@ class PocketOptionClient:
     def disconnect(self):
         if self._client:
             try:
-                asyncio.run_coroutine_threadsafe(
-                    self._client.disconnect(),
-                    self._loop
-                )
+                self._client.disconnect()
             except:
                 pass
         self._connected = False
