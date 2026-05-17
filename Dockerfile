@@ -3,7 +3,7 @@ FROM python:3.11.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including git and Chrome
+# Install system dependencies including Chrome for Selenium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
@@ -47,14 +47,14 @@ RUN wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/120.0.6
     && chmod +x /usr/local/bin/chromedriver \
     && rm -rf /tmp/chromedriver.zip /tmp/chromedriver-linux64
 
+# Install API-PocketOption from GitHub (for universal login)
+RUN pip install --no-cache-dir git+https://github.com/A11ksa/API-PocketOption.git
+
 # Copy requirements first (for better caching)
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Install API-PocketOption from GitHub (git is now installed)
-RUN pip install --no-cache-dir git+https://github.com/A11ksa/API-PocketOption.git
 
 # Copy the entire application
 COPY . .
