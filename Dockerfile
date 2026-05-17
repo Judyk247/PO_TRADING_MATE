@@ -49,7 +49,7 @@ RUN wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/120.0.6
 # Copy requirements first (for better caching)
 COPY requirements.txt .
 
-# Install Python dependencies (all from PyPI - no GitHub)
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the entire application
